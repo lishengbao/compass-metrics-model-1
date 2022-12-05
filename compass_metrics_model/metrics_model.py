@@ -691,7 +691,7 @@ class ActivityMetricsModel(MetricsModel):
     def contributor_count(self, date, repos_list):
         query_author_uuid_data = self.get_uuid_count_contribute_query(
             repos_list, company=None, from_date=(date - timedelta(days=90)), to_date=date)
-        author_uuid_count = self.es_in.search(index=(self.git_index, self.issue_index, self.pr_index, self.issue_comments_index,self.pr_comments_index), body=query_author_uuid_data)[
+        author_uuid_count = self.es_in.search(index=self.git_index, body=query_author_uuid_data)[
             'aggregations']["count_of_contributors"]['value']
         return author_uuid_count
 
@@ -817,25 +817,26 @@ class ActivityMetricsModel(MetricsModel):
                 'label': label,
                 'model_name': self.model_name,
                 'contributor_count': int(self.contributor_count(date, repos_list)),
-                'active_C2_contributor_count': self.active_C2_contributor_count(date, repos_list),
-                'active_C1_pr_create_contributor': self.active_C1_pr_create_contributor(date, repos_list),
-                'active_C1_pr_comments_contributor': self.active_C1_pr_comments_contributor(date, repos_list),
-                'active_C1_issue_create_contributor': self.active_C1_issue_create_contributor(date, repos_list),
-                'active_C1_issue_comments_contributor': self.active_C1_issue_comments_contributor(date, repos_list),
+                # 'active_C2_contributor_count': self.active_C2_contributor_count(date, repos_list),
+                # 'active_C1_pr_create_contributor': self.active_C1_pr_create_contributor(date, repos_list),
+                # 'active_C1_pr_comments_contributor': self.active_C1_pr_comments_contributor(date, repos_list),
+                # 'active_C1_issue_create_contributor': self.active_C1_issue_create_contributor(date, repos_list),
+                # 'active_C1_issue_comments_contributor': self.active_C1_issue_comments_contributor(date, repos_list),
                 'commit_frequency': commit_frequency_message,
                 'org_count': org_count,
                 'created_since': round(self.created_since(date, repos_list), 4),
-                'comment_frequency': float(round(comment_frequency, 4)) if comment_frequency is not None else None,
-                'code_review_count': round(code_review_count, 4) if code_review_count is not None else None,
+                # 'comment_frequency': float(round(comment_frequency, 4)) if comment_frequency is not None else None,
+                # 'code_review_count': round(code_review_count, 4) if code_review_count is not None else None,
                 'updated_since': float(round(self.updated_since(date, repos_list), 4)),
-                'closed_issues_count': self.closed_issue_count(date, repos_list),
-                'updated_issues_count': self.updated_issue_count(date, repos_list),
-                'recent_releases_count': self.recent_releases_count(date, repos_list),
+                # 'closed_issues_count': self.closed_issue_count(date, repos_list),
+                # 'updated_issues_count': self.updated_issue_count(date, repos_list),
+                # 'recent_releases_count': self.recent_releases_count(date, repos_list),
                 'grimoire_creation_date': date.isoformat(),
                 'metadata__enriched_on': datetime_utcnow().isoformat()
             }
-            self.cache_last_metrics_data(metrics_data, last_metrics_data)
-            score = get_activity_score(activity_decay(metrics_data, last_metrics_data, level), level)
+            # self.cache_last_metrics_data(metrics_data, last_metrics_data)
+            # score = get_activity_score(activity_decay(metrics_data, last_metrics_data, level), level)
+            score = get_activity_score(metrics_data, level)
             metrics_data["activity_score"] = score
             item_datas.append(metrics_data)
             if len(item_datas) > MAX_BULK_UPDATE_SIZE:
@@ -1082,7 +1083,7 @@ class CodeQualityGuaranteeMetricsModel(MetricsModel):
         self.git_branch = git_branch
         self.model_name = 'Code_Quality_Guarantee'
         self.pr_index = pr_index
-        self.company = company
+        self.company = None if company == None or company == 'None' else company
         self.pr_comments_index = pr_comments_index
         self.commit_message_dict = {}
 
@@ -1431,7 +1432,7 @@ class OrganizationsActivityMetricsModel(MetricsModel):
         self.git_branch = git_branch
         self.issue_comments_index = issue_comments_index
         self.pr_comments_index = pr_comments_index
-        self.company = company
+        self.company = None if company == None or company == 'None' else company
         self.model_name = 'Organizations Activity'
         self.org_name_dict = {}
 
