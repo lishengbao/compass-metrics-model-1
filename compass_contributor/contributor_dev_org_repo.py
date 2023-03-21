@@ -15,6 +15,7 @@ from grimoirelab_toolkit.datetime import (datetime_utcnow,
 logger = logging.getLogger(__name__)
 urllib3.disable_warnings()
 page_size = 1000
+MAX_BULK_UPDATE_SIZE = 5000
 
 exclude_field_list = ["unknown", "-- undefined --"]
 
@@ -232,7 +233,7 @@ class ContributorDevOrgRepo:
                 }
             }
             all_bulk_data.append(contributor_data)
-            if len(all_bulk_data) > 100:
+            if len(all_bulk_data) > MAX_BULK_UPDATE_SIZE:
                 helpers.bulk(client=self.client, actions=all_bulk_data)
                 all_bulk_data = []
         helpers.bulk(client=self.client, actions=all_bulk_data)
@@ -832,6 +833,17 @@ class ContributorDevOrgRepo:
             if len(contributors_list) > 0:
                 result_list = result_list + [contributor["_source"] for contributor in contributors_list]
         return dict(zip([item["uuid"] for item in result_list], result_list))
+
+    def get_org_name_by_email(self, email):
+        domain = get_email_prefix_domain(email)[1]
+        if domain is None:
+            return None
+        org_name = self.identities_dict[email] if self.identities_dict.get(email) else self.organizations_dict.get(domain)
+        if "facebook.com" in domain:
+            org_name = "Facebook"
+        if ("noreply.gitee.com" in domain or "noreply.github.com" in domain) and self.company is not None:
+            org_name = self.company
+        return org_name
 
     def get_org_name_by_email(self, email):
         domain = get_email_prefix_domain(email)[1]
