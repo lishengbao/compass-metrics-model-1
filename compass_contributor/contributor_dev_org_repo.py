@@ -151,16 +151,12 @@ class ContributorDevOrgRepo:
         }
         for issue_pr_index in issue_pr_index_dict.keys():
             if issue_pr_index != None:
-                if "bugzilla" in issue_pr_index:
-                    self.processing_platform_bugzilla_data(issue_pr_index, repo, self.from_date, self.end_date,
-                                                  issue_pr_index_dict[issue_pr_index])
-                else:
-                    self.processing_platform_gitee_github_data(issue_pr_index, repo, self.from_date, self.end_date,
+                self.processing_platform_data(issue_pr_index, repo, self.from_date, self.end_date,
                                                   issue_pr_index_dict[issue_pr_index])
 
         for fork_star in fork_star_dict.keys():
             if self.C0_index != None:
-                self.processing_platform_gitee_github_data(self.C0_index, repo, self.from_date, self.end_date, fork_star_dict[fork_star], fork_star)
+                self.processing_platform_data(self.C0_index, repo, self.from_date, self.end_date, fork_star_dict[fork_star], fork_star)
         if self.git_index != None:
             self.processing_commit_data(self.git_index, repo, self.from_date, self.end_date)
         if len(self.platform_item_id_dict) == 0 and len(self.git_item_id_dict) == 0:
@@ -239,13 +235,16 @@ class ContributorDevOrgRepo:
         helpers.bulk(client=self.client, actions=all_bulk_data)
         logger.info(repo + " finish count:" + str(len(all_items_dict)) + " " + str(datetime.now() - start_time))
 
-    def processing_platform_gitee_github_data(self, index, repo, from_date, to_date, date_field, fork_star=None):
+    def processing_platform_data(self, index, repo, from_date, to_date, date_field, fork_star=None):
         logger.info(repo + " " + index + " processing...")
         search_after = []
         count = 0
         start_time = datetime.now()
         while True:
-            results = self.get_gitee_github_enrich_data(index, repo, from_date, to_date, fork_star, page_size, search_after)
+            if "bugzilla" in index:
+                results = self.get_enrich_data(index, "component", repo.split("/")[-1], from_date, to_date, fork_star, page_size, search_after)
+            else:
+                results = self.get_enrich_data(index, "tag", repo, from_date, to_date, fork_star, page_size, search_after)
             count = count + len(results)
             if len(results) == 0:
                 break
@@ -298,79 +297,13 @@ class ContributorDevOrgRepo:
                     self.platform_item_identity_dict[identity] = item["uuid"]
         logger.info(repo + " " + index + " finish count:" + str(count) + " " + str(datetime.now() - start_time))
 
-    def processing_platform_bugzilla_data(self, index, repo, from_date, to_date, date_field):
-        logger.info(repo + " " + index + " processing...")
-        search_after = []
-        count = 0
-        start_time = datetime.now()
-        while True:
-            results = self.get_bugzilla_enrich_data(index, repo.split("/")[-1], from_date, to_date, page_size,
-                                                        search_after)
-            count = count + len(results)
-            if len(results) == 0:
-                break
-            for result in results:
-                search_after = result["sort"]
-                source = result["_source"]
-                grimoire_creation_date = datetime_to_utc(
-                    str_to_datetime(source["grimoire_creation_date"]).replace(tzinfo=None) + timedelta(
-                        microseconds=int(source["uuid"], 16) % 100000)).isoformat()
-                id_identity_list = [
-                    source.get("author_name"),
-                    source.get("author_user_name"),
-                    get_email_prefix_domain(source.get("user_email"))[0] if source.get("user_email") else None
-                ]
-                id_identity_list = set(
-                    [exclude_special_str(x.lower()) for x in id_identity_list if
-                     str_is_not_empty(x) and x.lower() not in exclude_field_list and str_is_not_empty(exclude_special_str(x))])
-                org_change_date_list = []
-                if source.get("user_email") is not None:
-                    domain = get_email_prefix_domain(source.get("user_email"))[1]
-                    if domain is not None:
-                        org_name = self.get_org_name_by_email(source.get("user_email"))
-                        org_date = {
-                            "domain": domain,
-                            "org_name": org_name,
-                            "first_date": grimoire_creation_date,
-                            "last_date": grimoire_creation_date
-                        }
-                        org_change_date_list.append(org_date)
-
-                item = {
-                    "uuid": get_uuid(repo, "platform", source["author_name"], source.get("author_user_name"),
-                                     source.get("user_email"), grimoire_creation_date),
-                    "id_platform_login_name_list": set([source.get("author_name")] if source.get("author_name") else []),
-                    "id_platform_author_name_list": set(
-                        [source.get("author_user_name")] if source.get("author_user_name") else []),
-                    "id_platform_author_email_list": set(
-                        [source.get("user_email")] if source.get("user_email") else []),
-                    "id_identity_list": id_identity_list,
-                    date_field: {grimoire_creation_date},
-                    "last_contributor_date": grimoire_creation_date,
-                    "org_change_date_list": org_change_date_list
-                }
-
-                old_item_dict = {}
-                for identity in id_identity_list:
-                    if identity in self.platform_item_identity_dict.keys() and self.platform_item_identity_dict[
-                        identity] in self.platform_item_id_dict.keys():
-                        old_item = self.platform_item_id_dict.pop(self.platform_item_identity_dict[identity])
-                        old_item_dict[old_item["uuid"]] = old_item
-                if len(old_item_dict) > 0:
-                    item = self.get_merge_old_new_contributor_data(old_item_dict, {item["uuid"]: item})[0][item["uuid"]]
-
-                self.platform_item_id_dict[item["uuid"]] = item
-                for identity in item["id_identity_list"]:
-                    self.platform_item_identity_dict[identity] = item["uuid"]
-        logger.info(repo + " " + index + " finish count:" + str(count) + " " + str(datetime.now() - start_time))
-
     def processing_commit_data(self, index, repo, from_date, to_date):
         logger.info(repo + " " + index + " processing...")
         search_after = []
         count = 0
         start_time = datetime.now()
         while True:
-            results = self.get_gitee_github_enrich_data(index, repo + ".git", from_date, to_date, page_size=page_size, search_after=search_after)
+            results = self.get_enrich_data(index, "tag", repo + ".git", from_date, to_date, page_size=page_size, search_after=search_after)
             count = count + len(results)
             if len(results) == 0:
                 break
@@ -533,7 +466,7 @@ class ContributorDevOrgRepo:
                 result_identity_uuid_dict[identity_list] = item["uuid"]
         return result_item_dict, merge_id_set
 
-    def get_gitee_github_enrich_data(self, index, repo, from_date, to_date, fork_star_type=None, page_size=100, search_after=[]):
+    def get_enrich_data(self, index, repo_field, repo, from_date, to_date, fork_star_type=None, page_size=100, search_after=[]):
         query = {
             "size": page_size,
             "query": {
@@ -541,7 +474,7 @@ class ContributorDevOrgRepo:
                     "must": [
                         {
                             "match_phrase": {
-                                "tag": repo
+                                repo_field: repo
                             }
                         }
                     ],
@@ -572,48 +505,6 @@ class ContributorDevOrgRepo:
         }
         if fork_star_type is not None:
             query["query"]["bool"]["must"].append({"match_phrase": {"type": fork_star_type}})
-        if len(search_after) > 0:
-            query['search_after'] = search_after
-        results = self.client.search(index=index, body=query)["hits"]["hits"]
-        return results
-
-    def get_bugzilla_enrich_data(self, index, repo, from_date, to_date, page_size=100, search_after=[]):
-        query = {
-            "size": page_size,
-            "query": {
-                "bool": {
-                    "must": [
-                        {
-                            "match_phrase": {
-                                "component": repo
-                            }
-                        }
-                    ],
-                    "filter": [
-                        {
-                            "range": {
-                                "grimoire_creation_date": {
-                                    "gte": from_date,
-                                    "lte": to_date
-                                }
-                            }
-                        }
-                    ]
-                }
-            },
-            "sort": [
-                {
-                    "grimoire_creation_date": {
-                        "order": "asc"
-                    }
-                },
-                {
-                    "_id": {
-                        "order": "asc"
-                    }
-                }
-            ]
-        }
         if len(search_after) > 0:
             query['search_after'] = search_after
         results = self.client.search(index=index, body=query)["hits"]["hits"]
@@ -833,17 +724,6 @@ class ContributorDevOrgRepo:
             if len(contributors_list) > 0:
                 result_list = result_list + [contributor["_source"] for contributor in contributors_list]
         return dict(zip([item["uuid"] for item in result_list], result_list))
-
-    def get_org_name_by_email(self, email):
-        domain = get_email_prefix_domain(email)[1]
-        if domain is None:
-            return None
-        org_name = self.identities_dict[email] if self.identities_dict.get(email) else self.organizations_dict.get(domain)
-        if "facebook.com" in domain:
-            org_name = "Facebook"
-        if ("noreply.gitee.com" in domain or "noreply.github.com" in domain) and self.company is not None:
-            org_name = self.company
-        return org_name
 
     def get_org_name_by_email(self, email):
         domain = get_email_prefix_domain(email)[1]
