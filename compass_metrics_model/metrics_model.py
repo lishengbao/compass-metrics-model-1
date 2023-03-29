@@ -301,15 +301,15 @@ class MetricsModel:
                         for j in all_repo_json[project].get(key):
                             governance_repos_list.append(j)
             all_repo_list = software_artifact_repos_list + governance_repos_list
-            # if len(all_repo_list) > 0:
-            #     for repo in all_repo_list:
-            #         last_time = self.last_metrics_model_time(repo, self.model_name, "repo")
-            #         if last_time is None:
-            #             self.metrics_model_enrich(repos_list=[repo], label=repo, level="repo",
-            #                                       date_list=get_date_list(self.from_date, self.end_date))
-            #         if last_time is not None and last_time < self.end_date:
-            #             self.metrics_model_enrich(repos_list=[repo], label=repo, level="repo",
-            #                                       date_list=get_date_list(last_time, self.end_date))
+            if len(all_repo_list) > 0:
+                for repo in all_repo_list:
+                    last_time = self.last_metrics_model_time(repo, self.model_name, "repo")
+                    if last_time is None:
+                        self.metrics_model_enrich(repos_list=[repo], label=repo, level="repo",
+                                                  date_list=get_date_list(self.from_date, self.end_date))
+                    if last_time is not None and last_time < self.end_date:
+                        self.metrics_model_enrich(repos_list=[repo], label=repo, level="repo",
+                                                  date_list=get_date_list(last_time, self.end_date))
             if len(software_artifact_repos_list) > 0:
                 self.metrics_model_enrich(software_artifact_repos_list, self.community, SOFTWARE_ARTIFACT_KEY)
             if len(governance_repos_list) > 0:
@@ -413,70 +413,37 @@ class MetricsModel:
         query = {
             "size": size,
             "track_total_hits": "true",
-            "aggs": {"count_of_uuid":
-                     {option:
-                      {"field": field}
-                      }
-                     },
-            "query":
-            {"bool": {
-                "must": [
-                    {"bool":
-                     {"should":
-                      [{"simple_query_string":
-                        {"query": i + "*",
-                         "fields":
-                         [query_field]}}for i in repos_list],
-                         "minimum_should_match": 1,
-                         "filter":
-                         {"range":
-                          {date_field:
-                           {"gte": from_date.strftime("%Y-%m-%d"), "lt": to_date.strftime("%Y-%m-%d")}}}
-                      }
-                     }]}}
-        }
-        return query
-
-    def get_uuid_count_contribute_query(self, repos_list, company=None, from_date=str_to_datetime("1970-01-01"), to_date=datetime_utcnow()):
-        query = {
-            "size": 0,
             "aggs": {
-                "count_of_contributors": {
-                    "cardinality": {
-                        "field": "author_name"
-                    }
+                "count_of_uuid": {
+                    option: {"field": field}
                 }
             },
-            "query":
-            {"bool": {
-                "must": [
-                    {"bool":
-                     {"should":
-                      [{"simple_query_string":
-                        {"query": i + "*",
-                         "fields":
-                         ["tag"]}}for i in repos_list],
-                         "minimum_should_match": 1,
-                         "filter":
-                         {"range":
-                          {"grimoire_creation_date":
-                           {"gte": from_date.strftime("%Y-%m-%d"), "lt": to_date.strftime("%Y-%m-%d")}}}
-                      }
-                     }]}},
-        }
-
-        if company:
-            query["query"]["bool"]["must"] = [{"bool": {
-                "should": [
-                    {
-                        "simple_query_string": {
-                            "query": company + "*",
-                            "fields": [
-                                "author_domain"
-                            ]
+            "query": {
+                "bool": {
+                    "must": [
+                        {
+                            "bool": {
+                                "must": [
+                                    {
+                                        "terms": {
+                                            query_field: repos_list
+                                        }
+                                    }
+                                ],
+                                "filter": {
+                                    "range": {
+                                        date_field: {
+                                            "gte": from_date.strftime("%Y-%m-%d"),
+                                            "lt": to_date.strftime("%Y-%m-%d")
+                                        }
+                                    }
+                                }
+                            }
                         }
-                    }],
-                "minimum_should_match": 1}}]
+                    ]
+                }
+            }
+        }
         return query
 
     def get_updated_since_query(self, repos_list, date_field="grimoire_creation_date", order="desc", to_date=datetime_utcnow()):
@@ -519,16 +486,13 @@ class MetricsModel:
             },
             "query": {
                 "bool": {
-                    "must": [{
-                        "bool": {
-                            "should": [{
-                                "simple_query_string": {
-                                    "query": i,
-                                    "fields": ["tag"]
-                                }}for i in repos_list],
-                            "minimum_should_match": 1
+                    "must": [
+                        {
+                            "terms": {
+                                "tag": repos_list
+                            }
                         }
-                    }],
+                    ],
                     "must_not": [
                         {"term": {"state": "open"}},
                         {"term": {"state": "progressing"}}
@@ -544,7 +508,6 @@ class MetricsModel:
                 }
             }
         }
-
         return query
 
     def get_bugzilla_issue_closed_uuid_count(self, option, repos_list, field, from_date=str_to_datetime("1970-01-01"), to_date=datetime_utcnow()):
@@ -560,16 +523,13 @@ class MetricsModel:
             },
             "query": {
                 "bool": {
-                    "must": [{
-                        "bool": {
-                            "should": [{
-                                "simple_query_string": {
-                                    "query": i,
-                                    "fields": ["component"]
-                                }}for i in repos_list],
-                            "minimum_should_match": 1
+                    "must": [
+                        {
+                            "terms": {
+                                "component": repos_list
+                            }
                         }
-                    }],
+                    ],
                     "must_not": [
                         {"term": {"status": "NEW"}},
                         {"term": {"status": "ASSIGNED"}},
@@ -591,7 +551,6 @@ class MetricsModel:
                 }
             }
         }
-
         return query
 
     def get_pr_closed_uuid_count(self, option, repos_list, field, from_date=str_to_datetime("1970-01-01"), to_date=datetime_utcnow()):
@@ -607,21 +566,23 @@ class MetricsModel:
             },
             "query": {
                 "bool": {
-                    "must": [{
-                        "bool": {
-                            "should": [{
-                                "simple_query_string": {
-                                    "query": i,
-                                    "fields": ["tag"]
-                                }}for i in repos_list],
-                            "minimum_should_match": 1
-                        }
-                    },
+                    "must": [
                         {
-                        "match_phrase": {
-                            "pull_request": "true"
+                            "bool": {
+                                "must": [
+                                    {
+                                        "terms": {
+                                            "tag": repos_list
+                                        }
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            "match_phrase": {
+                                "pull_request": "true"
+                            }
                         }
-                    }
                     ],
                     "must_not": [
                         {"term": {"state": "open"}},
@@ -654,16 +615,12 @@ class MetricsModel:
             },
             "query": {
                 "bool": {
-                    "must": [{
-                        "bool": {
-                            "should": [{
-                                "simple_query_string": {
-                                    "query": i,
-                                    "fields": ["tag.keyword"]
-                                }}for i in repos_list],
-                            "minimum_should_match": 1
+                    "must": [
+                        {
+                            "terms": {
+                                "tag.keyword": repos_list
+                            }
                         }
-                    }
                     ],
                     "filter": {
                         "range": {
@@ -679,165 +636,35 @@ class MetricsModel:
 
         return query
 
-    # name list of author_name in a index
-    def get_all_CX_contributors(self, repos_list, search_index, pr=False, issue=False, from_date=str_to_datetime("1970-01-01"), to_date=datetime_utcnow()):
-        query_CX_users = {
-            "aggs": {
-                "name": {
-                    "terms": {
-                        "field": "author_name",
-                        "size": 100000
-                    }, "aggs": {
-                        "date": {
-                            "top_hits": {
-                                "sort": [{
-                                    "grimoire_creation_date": {"order": "asc"}
-                                }],
-                                "size": 1
-                            }
-                        }
-                    }
-                }
-            },
-            "query": {
-                "bool": {
-                    "should": [
-                        {
-                            "simple_query_string": {
-                                "query": i+"(*) OR " + i+"*",
-                                "fields": [
-                                    "tag"
-                                ]
-                            }
-                        } for i in repos_list
-                    ],
-                    "minimum_should_match": 1,
-                    "filter": {
-                        "range": {
-                            "grimoire_creation_date": {
-                                "gte": from_date.strftime("%Y-%m-%d"), "lte": to_date.strftime("%Y-%m-%d")
-                            }
-                        }
-                    }
-                }
-            },
-            "size": 0,
-            "from": 0
-        }
-        if pr:
-            query_CX_users["query"]["bool"]["must"] = {
-                "match_phrase": {
-                    "pull_request": "true"
-                }
-            }
-        if issue:
-            query_CX_users["query"]["bool"]["must"] = {
-                "match_phrase": {
-                    "pull_request": "false"
-                }
-            }
-        CX_contributors = self.es_in.search(index=search_index, body=query_CX_users)[
-            "aggregations"]["name"]["buckets"]
-        return [i["date"]["hits"]["hits"][0]["_source"] for i in CX_contributors]
-
-    def get_all_CX_comments_contributors(self, repos_list, search_index, pr=False, issue=False, from_date=str_to_datetime("1970-01-01"), to_date=datetime_utcnow()):
-        query_CX_users = {
-            "aggs": {
-                "name": {
-                    "terms": {
-                        "field": "author_name",
-                        "size": 100000
-                    }, "aggs": {
-                        "date": {
-                            "top_hits": {
-                                "sort": [{
-                                    "grimoire_creation_date": {"order": "asc"}
-                                }],
-                                "size": 1
-                            }
-                        }
-                    }
-                }
-            },
-            "query": {
-                "bool": {
-                    "should": [
-                        {
-                            "simple_query_string": {
-                                "query": i+"(*) OR " + i+"*",
-                                "fields": [
-                                    "tag"
-                                ]
-                            }
-                        } for i in repos_list
-                    ],
-                    "minimum_should_match": 1,
-                    "filter": {
-                        "range": {
-                            "grimoire_creation_date": {
-                                "gte": from_date.strftime("%Y-%m-%d"), "lte": to_date.strftime("%Y-%m-%d")
-                            }
-                        }
-                    }
-                }
-            },
-            "size": 1,
-            "from": 0
-        }
-        if pr:
-            query_CX_users["query"]["bool"]["must"] = [
-                {
-                    "match_phrase": {
-                        "item_type": "comment"
-                    }
-                }]
-            # print(query_CX_users)
-        if issue:
-            query_CX_users["query"]["bool"]["must"] = [
-                {
-                    "match_phrase": {
-                        "item_type": "comment"
-                    }
-                }, {
-                    "match_phrase": {
-                        "issue_pull_request": "false"
-                    }
-                }]
-        CX_contributors = self.es_in.search(index=search_index, body=query_CX_users)[
-            "aggregations"]["name"]["buckets"]
-        all_contributors = [i["date"]["hits"]["hits"]
-                            [0]["_source"] for i in CX_contributors]
-        return all_contributors
-
     def query_contributor_list(self, index, repo, date_field, from_date, to_date, page_size=100, search_after=[]):
         query = {
             "size": page_size,
             "query": {
                 "bool": {
-                "must": [
-                    {
-                    "match_phrase": {
-                        "repo_name.keyword": repo
-                    }    
-                    }
-                ],
-                "must_not": [
-                    {
-                      "match_phrase": {
-                        "id_git_author_name_list": "bot"
-                      }
-                    }
-                  ],
-                "filter": [
-                    {
-                    "range": {
-                        date_field: {
-                            "gte": from_date.strftime("%Y-%m-%d"),
-                            "lte": to_date.strftime("%Y-%m-%d")
+                    "must": [
+                        {
+                            "match_phrase": {
+                                "repo_name.keyword": repo
+                            }
                         }
-                    }
-                    }
-                ]
+                    ],
+                    "must_not": [
+                        {
+                            "match_phrase": {
+                                "id_git_author_name_list": "bot"
+                            }
+                        }
+                    ],
+                    "filter": [
+                        {
+                            "range": {
+                                date_field: {
+                                    "gte": from_date.strftime("%Y-%m-%d"),
+                                    "lte": to_date.strftime("%Y-%m-%d")
+                                }
+                            }
+                        }
+                    ]
                 }
             },
             "sort": [
@@ -846,7 +673,7 @@ class MetricsModel:
                         "order": "asc"
                     }
                 }
-            ]  
+            ]
         }
         if len(search_after) > 0:
             query['search_after'] = search_after
@@ -892,8 +719,9 @@ class ActivityMetricsModel(MetricsModel):
         self.model_name = 'Activity'
 
     def commit_frequency(self, date, repos_list):
+        git_repos_list = [repo + ".git" for repo in repos_list]
         query_commit_frequency = self.get_uuid_count_query(
-            "cardinality", repos_list, "hash", "grimoire_creation_date", size=0, from_date=date - timedelta(days=90), to_date=date)
+            "cardinality", git_repos_list, "hash", "grimoire_creation_date", size=0, from_date=date - timedelta(days=90), to_date=date)
         commit_frequency = self.es_in.search(index=self.git_index, body=query_commit_frequency)[
             'aggregations']["count_of_uuid"]['value']
         return commit_frequency/12.85
@@ -1548,12 +1376,13 @@ class CodeQualityGuaranteeMetricsModel(MetricsModel):
 
     def is_maintained(self, date, repos_list, level):
         is_maintained_list = []
+        git_repos_list = [repo + ".git" for repo in repos_list]
         if level == "repo":
             date_list_maintained = get_date_list(begin_date=str(
                 date-timedelta(days=90)), end_date=str(date), freq='7D')
             for day in date_list_maintained:
                 query_git_commit_i = self.get_uuid_count_query(
-                    "cardinality", repos_list, "hash", size=0, from_date=day-timedelta(days=7), to_date=day)
+                    "cardinality", git_repos_list, "hash", size=0, from_date=day-timedelta(days=7), to_date=day)
                 commit_frequency_i = self.es_in.search(index=self.git_index, body=query_git_commit_i)[
                     'aggregations']["count_of_uuid"]['value']
                 if commit_frequency_i > 0:
@@ -1575,8 +1404,9 @@ class CodeQualityGuaranteeMetricsModel(MetricsModel):
             return 0
 
     def LOC_frequency(self, date, repos_list, field='lines_changed'):
+        git_repos_list = [repo + ".git" for repo in repos_list]
         query_LOC_frequency = self.get_uuid_count_query(
-            'sum', repos_list, field, 'grimoire_creation_date', size=0, from_date=date-timedelta(days=90), to_date=date)
+            'sum', git_repos_list, field, 'grimoire_creation_date', size=0, from_date=date-timedelta(days=90), to_date=date)
         LOC_frequency = self.es_in.search(index=self.git_index, body=query_LOC_frequency)[
             'aggregations']['count_of_uuid']['value']
         return LOC_frequency/12.85
@@ -1599,7 +1429,8 @@ class CodeQualityGuaranteeMetricsModel(MetricsModel):
 
 
     def git_pr_linked_ratio(self, date, repos_list):
-        commit_frequency = self.get_uuid_count_query("cardinality", repos_list, "hash", "grimoire_creation_date", size=10000, from_date=date - timedelta(days=90), to_date=date)
+        git_repos_list = [repo + ".git" for repo in repos_list]
+        commit_frequency = self.get_uuid_count_query("cardinality", git_repos_list, "hash", "grimoire_creation_date", size=10000, from_date=date - timedelta(days=90), to_date=date)
         commits_without_merge_pr = {
             "bool": {
                 "should": [{"script": {
@@ -1835,6 +1666,10 @@ class OrganizationsActivityMetricsModel(MetricsModel):
     def contribution_last(self, from_date, to_date, contributor_list):
         contribution_last = 0
         contributor_dict = {} #{"repo_name":[contributor1,contributor2]}
+
+        from_date = from_date.strftime("%Y-%m-%d")
+        to_date = to_date.strftime("%Y-%m-%d")
+
         for contributor in contributor_list:
             repo_contributor_list = contributor_dict.get(contributor["repo_name"], [])
             repo_contributor_list.append(contributor)
