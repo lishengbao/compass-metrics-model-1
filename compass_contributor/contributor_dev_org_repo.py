@@ -102,7 +102,8 @@ def get_latest_date(date1, date2):
 
 class ContributorDevOrgRepo:
     def __init__(self, json_file, identities_config_file, organizations_config_file, issue_index, pr_index,
-                 issue_comments_index, pr_comments_index, git_index, contributors_index, from_date, end_date, C0_index, company, community):
+                 issue_comments_index, pr_comments_index, git_index, contributors_index, from_date, end_date, C0_index,
+                 company, community, git_branch):
         self.issue_index = issue_index
         self.pr_index = pr_index
         self.issue_comments_index = issue_comments_index
@@ -116,6 +117,7 @@ class ContributorDevOrgRepo:
         self.identities_dict = get_identities_info(identities_config_file)
         self.company = company
         self.community = community
+        self.git_branch = git_branch
         self.client = None
         self.all_repo = get_all_repo(json_file)
         self.platform_item_id_dict = {}
@@ -242,9 +244,12 @@ class ContributorDevOrgRepo:
         start_time = datetime.now()
         while True:
             if "bugzilla" in index:
-                results = self.get_enrich_data(index, "component", repo.split("/")[-1], from_date, to_date, fork_star, page_size, search_after)
+                query_dsl = self.get_enrich_dsl("component", repo.split("/")[-1], from_date, to_date, page_size, search_after)
             else:
-                results = self.get_enrich_data(index, "tag", repo, from_date, to_date, fork_star, page_size, search_after)
+                query_dsl = self.get_enrich_dsl("tag", repo, from_date, to_date, page_size, search_after)
+            if fork_star is not None:
+                query_dsl["query"]["bool"]["must"].append({"match_phrase": {"type": fork_star}})
+            results = self.client.search(index=index, body=query_dsl)["hits"]["hits"]
             count = count + len(results)
             if len(results) == 0:
                 break
@@ -303,14 +308,23 @@ class ContributorDevOrgRepo:
         count = 0
         start_time = datetime.now()
         while True:
-            results = self.get_enrich_data(index, "tag", repo + ".git", from_date, to_date, page_size=page_size, search_after=search_after)
+            query_dsl = self.get_enrich_dsl("tag", repo + ".git", from_date, to_date, page_size=page_size,
+                                      search_after=search_after)
+            if self.git_branch is not None:
+                query_dsl["query"]["bool"]["must"].append({"match_phrase": {"branches": self.git_branch}})
+            results = self.client.search(index=index, body=query_dsl)["hits"]["hits"]
+
             count = count + len(results)
             if len(results) == 0:
                 break
             for result in results:
                 search_after = result["sort"]
                 source = result["_source"]
-                if source.get("author_name") is None:
+                bot_list = ["i-robot","mindspore-ci-bot",
+                        "pytorchbot","Website Deployment Script","chronos_secgrp_pytorch_oss_ci_oncall","Pytorch Test Infra",
+                        "A. Unique TensorFlower","TensorFlower Gardener","tfdocsbot",
+                        "bot"]
+                if source.get("author_name") is None or source.get("author_name") in bot_list:
                     continue
                 grimoire_creation_date = datetime_to_utc(
                     str_to_datetime(source["grimoire_creation_date"]).replace(tzinfo=None) + timedelta(microseconds=int(source["uuid"], 16) % 100000)).isoformat()
@@ -466,7 +480,7 @@ class ContributorDevOrgRepo:
                 result_identity_uuid_dict[identity_list] = item["uuid"]
         return result_item_dict, merge_id_set
 
-    def get_enrich_data(self, index, repo_field, repo, from_date, to_date, fork_star_type=None, page_size=100, search_after=[]):
+    def get_enrich_dsl(self, repo_field, repo, from_date, to_date, page_size=100, search_after=[]):
         query = {
             "size": page_size,
             "query": {
@@ -503,12 +517,9 @@ class ContributorDevOrgRepo:
                 }
             ]
         }
-        if fork_star_type is not None:
-            query["query"]["bool"]["must"].append({"match_phrase": {"type": fork_star_type}})
         if len(search_after) > 0:
             query['search_after'] = search_after
-        results = self.client.search(index=index, body=query)["hits"]["hits"]
-        return results
+        return query
 
     def get_contributor_index_mapping(self):
         mapping = {

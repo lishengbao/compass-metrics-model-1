@@ -396,6 +396,8 @@ class MetricsModel:
         for repo in repos_list:
             query_first_commit_since = self.get_updated_since_query(
                 [repo], date_field='grimoire_creation_date', to_date=date, order="asc")
+            if self.git_branch is not None:
+                query_first_commit_since["query"]["bool"]["must"] = [{"match_phrase": {"branches": self.git_branch}}]
             first_commit_since = self.es_in.search(
                 index=self.git_index, body=query_first_commit_since)['hits']['hits']
             if len(first_commit_since) > 0:
@@ -722,6 +724,8 @@ class ActivityMetricsModel(MetricsModel):
         git_repos_list = [repo + ".git" for repo in repos_list]
         query_commit_frequency = self.get_uuid_count_query(
             "cardinality", git_repos_list, "hash", "grimoire_creation_date", size=0, from_date=date - timedelta(days=90), to_date=date)
+        if self.git_branch is not None:
+            query_commit_frequency["query"]["bool"]["must"].append({"match_phrase": {"branches": self.git_branch}})
         commit_frequency = self.es_in.search(index=self.git_index, body=query_commit_frequency)[
             'aggregations']["count_of_uuid"]['value']
         return commit_frequency/12.85
@@ -731,6 +735,8 @@ class ActivityMetricsModel(MetricsModel):
         for repo in repos_list:
             query_updated_since = self.get_updated_since_query(
                 [repo], date_field='metadata__updated_on', to_date=date)
+            if self.git_branch is not None:
+                query_updated_since["query"]["bool"]["must"] = [{"match_phrase": {"branches": self.git_branch}}]
             updated_since = self.es_in.search(
                 index=self.git_index, body=query_updated_since)['hits']['hits']
             if updated_since:
@@ -823,12 +829,7 @@ class ActivityMetricsModel(MetricsModel):
         contributor_identity = set()
 
         for contributor in contributor_list:
-            contributor_break_flag = False
-            for identity in contributor["id_identity_list"]:
-                if identity in contributor_identity:
-                    contributor_break_flag = True
-                    break
-            if not contributor_break_flag:
+            if len(contributor_identity & set(contributor["id_identity_list"])) == 0:
                 contributor_count += 1
             contributor_identity.update(contributor["id_identity_list"])
         return contributor_count
@@ -896,12 +897,13 @@ class ActivityMetricsModel(MetricsModel):
 
 
 class CommunitySupportMetricsModel(MetricsModel):
-    def __init__(self, issue_index=None, pr_index=None, git_index=None,  json_file=None, out_index=None, from_date=None, end_date=None, community=None, level=None):
+    def __init__(self, issue_index=None, pr_index=None, git_index=None,  json_file=None, out_index=None, from_date=None, end_date=None, community=None, level=None, git_branch=None):
         super().__init__(json_file, from_date, end_date, out_index, community, level)
         self.issue_index = issue_index
         self.model_name = 'Community Support and Service'
         self.pr_index = pr_index
         self.git_index = git_index
+        self.git_branch = git_branch
 
     def issue_first_reponse(self, date, repos_list):
         if self.issue_index is None:
@@ -1330,12 +1332,7 @@ class CodeQualityGuaranteeMetricsModel(MetricsModel):
         contributor_identity = set()
 
         for contributor in contributor_list:
-            contributor_break_flag = False
-            for identity in contributor["id_identity_list"]:
-                if identity in contributor_identity:
-                    contributor_break_flag = True
-                    break
-            if not contributor_break_flag:
+            if len(contributor_identity & set(contributor["id_identity_list"])) == 0:
                 contributor_count += 1
             contributor_identity.update(contributor["id_identity_list"])
         return contributor_count
@@ -1352,12 +1349,7 @@ class CodeQualityGuaranteeMetricsModel(MetricsModel):
                 if org.get("org_name") is not None and check_times_has_overlap(org["first_date"], org["last_date"], from_date, to_date):
                     org_name_set.add(org.get("org_name"))
             if self.company in org_name_set:
-                contributor_break_flag = False
-                for identity in contributor["id_identity_list"]:
-                    if identity in contributor_identity:
-                        contributor_break_flag = True
-                        break
-                if not contributor_break_flag:
+                if len(contributor_identity & set(contributor["id_identity_list"])) == 0:
                     contributor_count += 1
                 contributor_identity.update(contributor["id_identity_list"])
         return contributor_count
@@ -1365,6 +1357,8 @@ class CodeQualityGuaranteeMetricsModel(MetricsModel):
     def commit_frequency(self, date, repos_list):
         query_commit_frequency = self.get_uuid_count_query(
             "cardinality", repos_list, "hash", "grimoire_creation_date", size=0, from_date=date - timedelta(days=90), to_date=date)
+        if self.git_branch is not None:
+            query_commit_frequency["query"]["bool"]["must"].append({"match_phrase": {"branches": self.git_branch}})
         commit_frequency = self.es_in.search(index=self.git_index, body=query_commit_frequency)[
             'aggregations']["count_of_uuid"]['value']
         query_commit_frequency_commpany = 0
@@ -1383,6 +1377,9 @@ class CodeQualityGuaranteeMetricsModel(MetricsModel):
             for day in date_list_maintained:
                 query_git_commit_i = self.get_uuid_count_query(
                     "cardinality", git_repos_list, "hash", size=0, from_date=day-timedelta(days=7), to_date=day)
+                if self.git_branch is not None:
+                    query_git_commit_i["query"]["bool"]["must"].append(
+                        {"match_phrase": {"branches": self.git_branch}})
                 commit_frequency_i = self.es_in.search(index=self.git_index, body=query_git_commit_i)[
                     'aggregations']["count_of_uuid"]['value']
                 if commit_frequency_i > 0:
@@ -1393,6 +1390,9 @@ class CodeQualityGuaranteeMetricsModel(MetricsModel):
         elif level in ["project", "community"]:
             for repo in repos_list:
                 query_git_commit_i = self.get_uuid_count_query("cardinality",[repo+'.git'], "hash",from_date=date-timedelta(days=30), to_date=date)
+                if self.git_branch is not None:
+                    query_git_commit_i["query"]["bool"]["must"].append(
+                        {"match_phrase": {"branches": self.git_branch}})
                 commit_frequency_i = self.es_in.search(index=self.git_index, body=query_git_commit_i)['aggregations']["count_of_uuid"]['value']
                 if commit_frequency_i > 0:
                     is_maintained_list.append("True")
@@ -1407,6 +1407,9 @@ class CodeQualityGuaranteeMetricsModel(MetricsModel):
         git_repos_list = [repo + ".git" for repo in repos_list]
         query_LOC_frequency = self.get_uuid_count_query(
             'sum', git_repos_list, field, 'grimoire_creation_date', size=0, from_date=date-timedelta(days=90), to_date=date)
+        if self.git_branch is not None:
+            query_LOC_frequency["query"]["bool"]["must"].append(
+                {"match_phrase": {"branches": self.git_branch}})
         LOC_frequency = self.es_in.search(index=self.git_index, body=query_LOC_frequency)[
             'aggregations']['count_of_uuid']['value']
         return LOC_frequency/12.85
@@ -1440,6 +1443,8 @@ class CodeQualityGuaranteeMetricsModel(MetricsModel):
                 "minimum_should_match": 1}
         }
         commit_frequency["query"]["bool"]["must"].append(commits_without_merge_pr)
+        if self.git_branch is not None:
+            commit_frequency["query"]["bool"]["must"].append({"match_phrase": {"branches": self.git_branch}})
         commit_message = self.es_in.search(index=self.git_index, body=commit_frequency)
         commit_count = commit_message['aggregations']["count_of_uuid"]['value']
         commit_pr_cout = 0
@@ -1607,11 +1612,10 @@ class OrganizationsActivityMetricsModel(MetricsModel):
 
         for contributor in contributor_list:
             for org in contributor["org_change_date_list"]:
-                if org.get("org_name") is not None and check_times_has_overlap(org["first_date"], org["last_date"], from_date, to_date) \
-                        and len(contributor_identity & set(contributor["id_identity_list"])) == 0:
-                    contributor_count += 1
+                if org.get("org_name") is not None and check_times_has_overlap(org["first_date"], org["last_date"], from_date, to_date):
+                    if len(contributor_identity & set(contributor["id_identity_list"])) == 0:
+                        contributor_count += 1
                     contributor_identity.update(contributor["id_identity_list"])
-                    break
 
             for org in contributor["org_change_date_list"]:
                 if check_times_has_overlap(org["first_date"], org["last_date"], from_date, to_date):
@@ -1619,9 +1623,8 @@ class OrganizationsActivityMetricsModel(MetricsModel):
                     org_contributor_identity = org_contributor_identity_dict.get(org_name, set())
                     if len(org_contributor_identity & set(contributor["id_identity_list"])) == 0:
                         org_contributor_count_dict[org_name] = org_contributor_count_dict.get(org_name, 0) + 1
-                        org_contributor_identity.update(contributor["id_identity_list"])
-                        org_contributor_identity_dict[org_name] = org_contributor_identity
-                    continue
+                    org_contributor_identity.update(contributor["id_identity_list"])
+                    org_contributor_identity_dict[org_name] = org_contributor_identity
 
         return contributor_count, org_contributor_count_dict
 
