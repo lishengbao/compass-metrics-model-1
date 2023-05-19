@@ -30,11 +30,15 @@ import logging
 import pkg_resources
 from grimoire_elk.enriched.utils import get_time_diff_days
 from grimoirelab_toolkit.datetime import (datetime_utcnow,
-                                          str_to_datetime)
+                                          str_to_datetime,
+                                          datetime_to_utc)
 from elasticsearch import Elasticsearch, RequestsHttpConnection
 from elasticsearch import helpers
 from elasticsearch.exceptions import NotFoundError
 from grimoire_elk.elastic import ElasticSearch
+from compass_common.utils.list_utils import list_sub
+from compass_common.utils.datetime_utils import (str_to_offset,
+                                                 datetime_range)
 
 from .utils import (get_uuid,
                     get_date_list,
@@ -57,7 +61,7 @@ sys.path.append('../')
 
 logger = logging.getLogger(__name__)
 
-MAX_BULK_UPDATE_SIZE = 5000
+MAX_BULK_UPDATE_SIZE = 10
 
 def newest_message(repo_url):
     query = {
@@ -244,13 +248,16 @@ def get_medium(L):
 
 
 class MetricsModel:
-    def __init__(self, json_file, from_date, end_date, out_index=None, community=None, level=None, weights=None, custom_fields=None):
+    def __init__(self, json_file, from_date, end_date, out_index=None, community=None, level=None, weights=None,
+                 custom_fields=None, weights_file='resources/weights.yaml'):
         """Metrics Model is designed for the integration of multiple CHAOSS metrics.
         :param json_file: the path of json file containing repository message.
         :param out_index: target index for Metrics Model.
         :param community: used to mark the repo belongs to which community.
         :param level: str representation of the metrics, choose from repo, project, community.
         :param weights: dict representation of the weights of metrics.
+        :custom_fields: dict representation of the custom fields of metrics.
+        :param weights_file: the path to the default weight message. when weights is None, then this weight message is used
         """
         self.json_file = json_file
         self.out_index = out_index
@@ -264,7 +271,7 @@ class MetricsModel:
             self.weights = weights
             self.weights_hash = get_dict_hash(weights)
         else:
-            weights_data = pkg_resources.resource_string('compass_metrics_model', 'resources/weights.yaml')
+            weights_data = pkg_resources.resource_string('compass_metrics_model', weights_file)
             self.weights = yaml.load(weights_data, Loader=yaml.FullLoader)
             self.weights_hash = None
 
@@ -625,7 +632,53 @@ class MetricsModel:
                             "range": {
                                 date_field: {
                                     "gte": from_date.strftime("%Y-%m-%d"),
-                                    "lte": to_date.strftime("%Y-%m-%d")
+                                    "lt": to_date.strftime("%Y-%m-%d")
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            "sort": [
+                {
+                    "_id": {
+                        "order": "asc"
+                    }
+                }
+            ]
+        }
+        if len(search_after) > 0:
+            query['search_after'] = search_after
+        results = self.es_in.search(index=index, body=query)["hits"]["hits"]
+        return results
+    
+    def query_contributor_silence_list(self, index, repo, date_field, first_date_field,from_date, to_date, page_size=100, search_after=[]):
+        query = {
+            "size": page_size,
+            "query": {
+                "bool": {
+                    "must": [
+                        {
+                            "match_phrase": {
+                                "repo_name.keyword": repo
+                            }
+                        }
+                    ],
+                    "must_not": [
+                        {
+                            "range": {
+                                date_field: {
+                                    "gte": from_date.strftime("%Y-%m-%d"),
+                                    "lt": to_date.strftime("%Y-%m-%d")
+                                }
+                            }
+                        }
+                    ],
+                    "filter": [
+                        {
+                            "range": {
+                                first_date_field: {
+                                    "lt": from_date.strftime("%Y-%m-%d")
                                 }
                             }
                         }
@@ -656,10 +709,22 @@ class MetricsModel:
                 search_after = contributor_list[len(contributor_list) - 1]["sort"]
                 result_list = result_list +[contributor["_source"] for contributor in contributor_list]
         return result_list
+    
+    def get_contributor_silence_list(self, from_date, to_date, repos_list, date_field, first_date_field):
+        result_list = []
+        for repo in repos_list:
+            search_after = []
+            while True:
+                contributor_list = self.query_contributor_silence_list(self.contributors_index, repo, date_field, first_date_field, from_date, to_date, 500, search_after)
+                if len(contributor_list) == 0:
+                    break
+                search_after = contributor_list[len(contributor_list) - 1]["sort"]
+                result_list = result_list +[contributor["_source"] for contributor in contributor_list]
+        return result_list
 
     def contributor_count(self, contributor_list, is_bot=None):
         contributor_set = set()
-        for contributor in contributor_list:
+        for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
             if is_bot is None or contributor["is_bot"] == is_bot:
                 if contributor.get("id_platform_login_name_list") and len(contributor.get("id_platform_login_name_list")) > 0:
                     contributor_set.add(contributor["id_platform_login_name_list"][0])
@@ -671,7 +736,7 @@ class MetricsModel:
         from_date = from_date.strftime("%Y-%m-%d")
         to_date = to_date.strftime("%Y-%m-%d")
         commit_count = 0
-        for contributor in contributor_list:
+        for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
             if is_bot is None or contributor["is_bot"] == is_bot:
                 if company is None:
                     for commit_date in contributor["code_commit_date_list"]:
@@ -691,11 +756,244 @@ class MetricsModel:
         from_date = from_date.strftime("%Y-%m-%d")
         to_date = to_date.strftime("%Y-%m-%d")
 
-        for contributor in contributor_list:
+        for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
             for org in contributor["org_change_date_list"]:
                 if  org.get("org_name") is not None and check_times_has_overlap(org["first_date"], org["last_date"], from_date, to_date):
                     org_name_set.add(org.get("org_name"))
         return len(org_name_set)
+
+    def get_contribution_activity_date_dict(self, date_field_contributor_dict, is_bot=False):
+        """ Get the names of active contributors and their contribution times in the from_date and to_date range """
+        contributor_date_dict = {}
+        contributor_list = [item for sublist in date_field_contributor_dict.values() for item in sublist]
+        date_field_list = list(date_field_contributor_dict.keys())
+        for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
+            if is_bot is None or contributor["is_bot"] == is_bot:
+                contributor_name = None
+                if contributor.get("id_platform_login_name_list") and len(
+                        contributor.get("id_platform_login_name_list")) > 0:
+                    contributor_name = contributor["id_platform_login_name_list"][0]
+                elif contributor.get("id_git_author_name_list") and len(
+                        contributor.get("id_git_author_name_list")) > 0:
+                    contributor_name = contributor["id_git_author_name_list"][0]
+                contribution_date = []
+                for date_field in date_field_list:
+                    contribution_date.extend(contributor.get(date_field, []))
+                contributor_date_dict[contributor_name] = sorted(contributor_date_dict.get(contributor_name, [])
+                                                                     + contribution_date)
+        return contributor_date_dict
+
+    def get_contribution_activity_casual_regular_core_set(self, from_date, to_date, contributor_date_dict,
+                                                          observe_contributor_date_dict, period="week"):
+        """Distinguish between active contributors as casual, regular, core"""
+
+        from_date = from_date.isoformat()
+        to_date = to_date.isoformat()
+        contributor_date_dict = {k: v for k, v in contributor_date_dict.items() if len(list_sub(v, from_date, to_date)) > 0}
+        observe_contributor_date_dict = {k: v for k, v in observe_contributor_date_dict.items() if len(list_sub(v, from_date, to_date)) > 0}
+
+        def get_activity_regular_set(from_date, to_date, contributor_date_dict):
+            """
+                Those who contributed at least once every 30 days for the last 90 days,
+                or made at least 4 contributions in the last 90 days
+            """
+            result_set = set()
+            for contributor, contributor_date_list in contributor_date_dict.items():
+                for contributor_date in list_sub(contributor_date_list, from_date, to_date):
+                    contributor_date_utc = datetime_to_utc(str_to_datetime(contributor_date))
+                    last_30_days_date = (contributor_date_utc - timedelta(days=30)).isoformat()
+                    last_60_days_date = (contributor_date_utc - timedelta(days=60)).isoformat()
+                    last_90_days_date = (contributor_date_utc - timedelta(days=90)).isoformat()
+                    last_90_days_contribution_date_list = list_sub(contributor_date_list, last_90_days_date,
+                                                                   contributor_date)
+                    last_90_days_contribution_date_list.append(contributor_date)
+                    if len(last_90_days_contribution_date_list) >= 4:
+                        result_set.add(contributor)
+                        break
+                    if len(last_90_days_contribution_date_list) == 3 and \
+                            len(list_sub(last_90_days_contribution_date_list, last_90_days_date,
+                                         last_60_days_date)) > 1 and \
+                            len(list_sub(last_90_days_contribution_date_list, last_60_days_date,
+                                         last_30_days_date)) > 1:
+                        result_set.add(contributor)
+                        break
+            return result_set
+
+        def get_activity_core_set(from_date, to_date, contributor_date_dict):
+            """
+                80% of all contributions for the quarter/year are made by the smallest group of people,
+                which is called the quarter/year core contributors
+            """
+            contribution_count_dict = {k: len(list_sub(v, from_date, to_date)) for k, v in
+                                       contributor_date_dict.items()}
+            sorted_dict = {k: v for k, v in
+                           sorted(contribution_count_dict.items(), key=lambda item: item[1], reverse=True)}
+            target_sum = sum(sorted_dict.values()) * 0.8
+            current_sum = 0
+            result_set = set()
+            for k, v in sorted_dict.items():
+                current_sum += v
+                result_set.add(k)
+                if current_sum >= target_sum:
+                    break
+            return result_set
+
+        activity_total_set = set(contributor_date_dict.keys()) | set(observe_contributor_date_dict.keys())
+        activity_regular_set = get_activity_regular_set(from_date, to_date, contributor_date_dict)
+        activity_casual_set = activity_total_set - activity_regular_set
+
+        activity_core_set = set()
+        if period == "seasonal" or period == "year":
+            contributor_regular_date_dict = {k: v for k, v in contributor_date_dict.items() if
+                                             k in activity_regular_set}
+            activity_core_set = get_activity_core_set(from_date, to_date, contributor_regular_date_dict)
+            activity_regular_set = activity_regular_set - activity_core_set
+
+        return activity_total_set, activity_casual_set, activity_regular_set, activity_core_set
+
+    def get_freq_contributor_activity_set(self, from_date, to_date, date_field_contributor_dict, is_bot=False,
+                                          period="week"):
+        """Get the number of active contributors by contribution frequency"""
+        observe_date_field = ["star_date_list", "fork_date_list", "watch_date_list"]
+        other_date_field_contributor_dict = {k: date_field_contributor_dict[k] for k in date_field_contributor_dict if
+                                             k not in observe_date_field}
+        observe_date_field_contributor_dict = {k: date_field_contributor_dict[k] for k in observe_date_field if
+                                               k in date_field_contributor_dict}
+
+        contributor_date_dict = self.get_contribution_activity_date_dict(other_date_field_contributor_dict, is_bot)
+        observe_contributor_date_dict = self.get_contribution_activity_date_dict(observe_date_field_contributor_dict, is_bot)
+
+        return self.get_contribution_activity_casual_regular_core_set(from_date, to_date, contributor_date_dict, observe_contributor_date_dict, period)
+
+    def get_type_contributor_activity_set(self, from_date, to_date, date_field_contributor_dict, is_bot=False):
+        """Get the number of active contributors by contribution type"""
+        contributor_date_dict = self.get_contribution_activity_date_dict(date_field_contributor_dict, is_bot)
+        contributor_set = {k for k, v in contributor_date_dict.items() if
+                           len(list_sub(v, from_date.isoformat(), to_date.isoformat())) > 0}
+        return contributor_set
+
+    def get_contribution_attraction_date_dict(self, from_date, to_date, date_field_contributor_dict, is_bot=False):
+        """Get the names of attraction contributors and their contribution times in the from_date and to_date range"""
+
+        def get_first_contribution_date(contributor, date_field_list):
+            """ Get first contribution time for contributor """
+            date_list = []
+            for date_field in date_field_list:
+                contribution_date_list = contributor.get(date_field)
+                if contribution_date_list:
+                    date_list.append(contribution_date_list[0])
+            return min(date_list)
+
+        from_date = from_date.isoformat()
+        to_date = to_date.isoformat()
+        contributor_date_dict = {}
+        contributor_list = [item for sublist in date_field_contributor_dict.values() for item in sublist]
+        date_field_list = list(date_field_contributor_dict.keys())
+        for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
+            if (is_bot is None or contributor["is_bot"] == is_bot) and \
+                    from_date <= get_first_contribution_date(contributor, date_field_list) <= to_date:
+                contributor_name = None
+                if contributor.get("id_platform_login_name_list") and len(
+                        contributor.get("id_platform_login_name_list")) > 0:
+                    contributor_name = contributor["id_platform_login_name_list"][0]
+                elif contributor.get("id_git_author_name_list") and len(contributor.get("id_git_author_name_list")) > 0:
+                    contributor_name = contributor["id_git_author_name_list"][0]
+                contribution_date = []
+                for date_field in date_field_list:
+                    contribution_date.extend(contributor.get(date_field))
+                contributor_date_dict[contributor_name] = sorted(contributor_date_dict.get(contributor_name, [])
+                                                                 + contribution_date)
+        return contributor_date_dict
+
+    def get_freq_contributor_attraction_set(self, from_date, to_date, date_field_contributor_dict, is_bot=False, period="week"):
+        """Get the number of active contributors by contribution frequency"""
+        observe_date_field = ["star_date_list", "fork_date_list", "watch_date_list"]
+        other_date_field_contributor_dict = {k: date_field_contributor_dict[k] for k in date_field_contributor_dict if
+                                             k not in observe_date_field}
+        observe_date_field_contributor_dict = {k: date_field_contributor_dict[k] for k in observe_date_field if
+                                               k in date_field_contributor_dict}
+
+        contributor_date_dict = self.get_contribution_attraction_date_dict(from_date, to_date,
+                                                                           other_date_field_contributor_dict, is_bot)
+        observe_contributor_date_dict = self.get_contribution_attraction_date_dict(from_date, to_date,
+                                                                                 observe_date_field_contributor_dict,
+                                                                                   is_bot)
+
+        return self.get_contribution_activity_casual_regular_core_set(from_date, to_date, contributor_date_dict,
+                                                                      observe_contributor_date_dict, period)
+
+    def get_type_contributor_attraction_set(self, from_date, to_date, date_field_contributor_dict, is_bot=False):
+        """Get the number of attraction contributors by contribution type"""
+        contributor_date_dict = self.get_contribution_attraction_date_dict(from_date, to_date,
+                                                                           date_field_contributor_dict, is_bot=is_bot)
+        return contributor_date_dict.keys()
+
+    def get_conversion_to_silence_set(self, from_date, to_date, date_field_contributor_dict, is_bot=False, period="week"):
+        """Get the number of attrition contributors by contribution frequency"""
+        attrition_total_set = set()
+        attrition_casual_set = set()
+        attrition_regular_set = set()
+        attrition_core_set = set()
+
+        last_90_day_activity_contribution_dict = {}
+        for current_day in [from_date, to_date]:
+            last_90_day = current_day + str_to_offset("-90d")
+            last_90_day_from_date, last_90_day_to_date = datetime_range(last_90_day, period)
+            activity_total_set, \
+            activity_casual_set, \
+            activity_regular_set, \
+            activity_core_set = self.get_freq_contributor_activity_set(last_90_day_from_date, last_90_day_to_date,
+                                                                       date_field_contributor_dict, is_bot, period)
+            prefix_key = str(last_90_day_from_date)
+            last_90_day_activity_contribution_dict.update(
+                {prefix_key + "&" + item: "casual" for item in activity_casual_set})
+            last_90_day_activity_contribution_dict.update(
+                {prefix_key + "&" + item: "regular" for item in activity_regular_set})
+            last_90_day_activity_contribution_dict.update(
+                {prefix_key + "&" + item: "core" for item in activity_core_set})
+
+        contributor_date_dict = self.get_contribution_activity_date_dict(date_field_contributor_dict, is_bot)
+        last_90_day_from_date_str = (from_date + str_to_offset("-90d")).isoformat()
+        last_90_day_to_date_str = (to_date + str_to_offset("-90d")).isoformat()
+        for contributor_name, contribution_date_list in contributor_date_dict.items():
+            last_90_day_contribution_date_list = list_sub(contribution_date_list, last_90_day_from_date_str, last_90_day_to_date_str)
+            if len(last_90_day_contribution_date_list) > 0:
+                if period in ["week", "month", "seasonal", "year"]:
+                    last_90_day = str_to_datetime(max(last_90_day_contribution_date_list))
+                    day = last_90_day + str_to_offset("90d")
+                    last_90_day_from_date, last_90_day_to_date = datetime_range(last_90_day, period)
+                    key = str(last_90_day_from_date) + "&" + contributor_name
+                    if len(list_sub(contribution_date_list, last_90_day.isoformat(), day.isoformat(), start_include=False, end_include=True)) == 0 and \
+                            key in last_90_day_activity_contribution_dict:
+                        attrition_total_set.add(contributor_name)
+                        if last_90_day_activity_contribution_dict[key] == 'casual':
+                            attrition_casual_set.add(contributor_name)
+                        elif last_90_day_activity_contribution_dict[key] == 'regular':
+                            attrition_regular_set.add(contributor_name)
+                        elif last_90_day_activity_contribution_dict[key] == 'core':
+                            attrition_core_set.add(contributor_name)
+                if period in "year":
+                    date_list_tmp = [last_90_day_from_date_str]
+                    date_list_tmp.extend(last_90_day_contribution_date_list)
+                    date_list_tmp.append(last_90_day_to_date_str)
+                    for i in range(1, len(date_list_tmp)):
+                        date1 = str_to_datetime(date_list_tmp[i-1])
+                        date2 = str_to_datetime(date_list_tmp[i])
+                        delta = date2 - date1
+                        if delta.days > 90:
+                            last_90_day_from_date, last_90_day_to_date = datetime_range(date1, period)
+                            key = str(last_90_day_from_date) + "&" + contributor_name
+                            if key in last_90_day_activity_contribution_dict:
+                                attrition_total_set.add(contributor_name)
+                                if last_90_day_activity_contribution_dict[key] == 'casual':
+                                    attrition_casual_set.add(contributor_name)
+                                elif last_90_day_activity_contribution_dict[key] == 'regular':
+                                    attrition_regular_set.add(contributor_name)
+                                elif last_90_day_activity_contribution_dict[key] == 'core':
+                                    attrition_core_set.add(contributor_name)
+                            break
+        return attrition_total_set, attrition_casual_set, attrition_regular_set, attrition_core_set
+
 
 
 class ActivityMetricsModel(MetricsModel):
@@ -1427,12 +1725,12 @@ class OrganizationsActivityMetricsModel(MetricsModel):
         self.org_name_dict = {}
 
     def add_org_name(self, contributor_list):
-        for contributor in contributor_list:
+        for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
             for org in contributor["org_change_date_list"]:
                 org_name = org.get("org_name") if org.get("org_name") else org.get("domain")
                 is_org = True if org.get("org_name") else False
                 self.org_name_dict[org_name] = is_org
-           
+
     def org_contributor_count(self, from_date, to_date, contributor_list):
         contributor_set = set()
         contributor_bot_set = set()
@@ -1443,7 +1741,7 @@ class OrganizationsActivityMetricsModel(MetricsModel):
         from_date = from_date.strftime("%Y-%m-%d")
         to_date = to_date.strftime("%Y-%m-%d")
 
-        for contributor in contributor_list:
+        for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
             for org in contributor["org_change_date_list"]:
                 if org.get("org_name") is not None and check_times_has_overlap(org["first_date"], org["last_date"], from_date, to_date):
                     contributor_set.add(contributor["id_git_author_name_list"][0])
@@ -1462,7 +1760,7 @@ class OrganizationsActivityMetricsModel(MetricsModel):
                     org_contributor_count_dict[org_name] = len(org_contributor_author)
 
         return len(contributor_set), len(contributor_bot_set), len(contributor_without_bot_set), org_contributor_count_dict
-            
+
     def org_commit_frequency(self, from_date, to_date, contributor_list):
         total_count = 0
         commit_count = 0
@@ -1474,7 +1772,7 @@ class OrganizationsActivityMetricsModel(MetricsModel):
         from_date = from_date.strftime("%Y-%m-%d")
         to_date = to_date.strftime("%Y-%m-%d")
 
-        for contributor in contributor_list:
+        for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
             for commit_date in contributor["code_commit_date_list"]:
                 if from_date <= commit_date and commit_date <= to_date:
                     total_count += 1
@@ -1488,7 +1786,7 @@ class OrganizationsActivityMetricsModel(MetricsModel):
                                 commit_bot_count += 1
                             else:
                                 commit_without_bot_count += 1
-            
+
             for org in contributor["org_change_date_list"]:
                 if check_times_has_overlap(org["first_date"], org["last_date"], from_date, to_date):
                     org_name = org.get("org_name") if org.get("org_name") else org.get("domain")
@@ -1510,7 +1808,7 @@ class OrganizationsActivityMetricsModel(MetricsModel):
     def contribution_last(self, from_date, to_date, contributor_list):
         contribution_last = 0
         contributor_dict = {}  # {"repo_name":[contributor1,contributor2]}
-        for contributor in contributor_list:
+        for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
             repo_contributor_list = contributor_dict.get(contributor["repo_name"], [])
             repo_contributor_list.append(contributor)
             contributor_dict[contributor["repo_name"]] = repo_contributor_list
@@ -1530,7 +1828,7 @@ class OrganizationsActivityMetricsModel(MetricsModel):
                                     break
                 contribution_last += len(org_name_set)
         return contribution_last
-        
+
     def metrics_model_enrich(self, repos_list, label, type=None, level=None, date_list=None):
         level = level if level != None else self.level
         date_list = date_list if date_list != None else self.date_list

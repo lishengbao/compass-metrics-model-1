@@ -4,13 +4,15 @@ import yaml
 import re
 import logging
 from datetime import datetime, timedelta
-from urllib.parse import urlparse
 import urllib3
-from elasticsearch import Elasticsearch, RequestsHttpConnection
 from elasticsearch import helpers
 from grimoirelab_toolkit.datetime import (datetime_utcnow,
                                           str_to_datetime,
                                           datetime_to_utc)
+from compass_common.utils.uuid_utils import get_uuid
+from compass_common.utils.opensearch_client_utils import get_elasticsearch_client
+from compass_common.utils.utils import get_all_repo
+from compass_common.utils.str_utils import str_is_not_empty
 
 logger = logging.getLogger(__name__)
 urllib3.disable_warnings()
@@ -19,29 +21,10 @@ MAX_BULK_UPDATE_SIZE = 5000
 
 exclude_field_list = ["unknown", "-- undefined --"]
 
-
-def str_is_not_empty(str):
-    return False if str == None or len(str) == 0 else True
-
 def exclude_special_str(str):
+    """ Exclude special characters """
     regEx = "[`~!@#$%^&*()+=|{}':;',\\[\\].<>/?~！@#￥%……&*（）——+|{}【】‘；：”“’\"\"。 ，、？_-]"
     return re.sub(regEx, "",str)
-
-
-def get_uuid(*args):
-    args_list = []
-    for arg in args:
-        if arg is None or arg == '':
-            continue
-        args_list.append(arg)
-    return uuid(*args_list)
-
-def get_elasticsearch_client(elastic_url):
-    is_https = urlparse(elastic_url).scheme == 'https'
-    client = Elasticsearch(
-        elastic_url, use_ssl=is_https, verify_certs=False, connection_class=RequestsHttpConnection)
-    return client
-
 
 def get_organizations_info(file_path):
     organizations_dict = {}
@@ -104,19 +87,6 @@ def is_bot_by_author_name(bots_dict, repo, author_name_list):
                 return True
     return False
 
-def get_all_repo(json_file, origin):
-    all_repo = []
-    all_repo_json = json.load(open(json_file))
-    for project in all_repo_json:
-        origin_software_artifact = origin + "-software-artifact"
-        origin_governance = origin + "-governance"
-        for key in all_repo_json[project].keys():
-            if key == origin_software_artifact or key == origin_governance or key == origin:
-                for repo in all_repo_json[project].get(key):
-                    all_repo.append(repo)
-    return all_repo
-
-
 def list_of_groups(list_info, per_list_len):
     list_of_group = zip(*(iter(list_info),) * per_list_len)
     end_list = [list(i) for i in list_of_group]
@@ -147,13 +117,13 @@ def get_latest_date(date1, date2):
 class ContributorDevOrgRepo:
     def __init__(self, json_file, identities_config_file, organizations_config_file, bots_config_file, issue_index,
                  pr_index, issue_comments_index, pr_comments_index, git_index, contributors_index, from_date, end_date,
-                 C0_index=None, company=None):
+                 observe_index=None, company=None):
         self.issue_index = issue_index
         self.pr_index = pr_index
         self.issue_comments_index = issue_comments_index
         self.pr_comments_index = pr_comments_index
         self.git_index = git_index
-        self.C0_index = C0_index
+        self.observe_index = observe_index
         self.contributors_index = contributors_index
         self.from_date = from_date
         self.end_date = end_date
@@ -189,8 +159,9 @@ class ContributorDevOrgRepo:
             "pr": [self.pr_index, "pr_creation_date_list"],
             "issue_comments": [self.issue_comments_index, "issue_comments_date_list"],
             "pr_comments": [self.pr_comments_index, "pr_review_date_list"],
-            # "fork": [self.C0_index, "fork_date_list"],
-            # "star": [self.C0_index, "star_date_list"]
+            "fork": [self.observe_index, "fork_date_list"],
+            "star": [self.observe_index, "star_date_list"],
+            "watch": [self.observe_index, "watch_date_list"]
         }
         for index_key, index_values in platform_index_type_dict.items():
             if index_values[0] is not None:
@@ -221,6 +192,7 @@ class ContributorDevOrgRepo:
             code_commit_date_list = list(item.get("code_commit_date_list", []))
             fork_date_list = list(item.get("fork_date_list", []))
             star_date_list = list(item.get("star_date_list", []))
+            watch_date_list = list(item.get("watch_date_list", []))
             org_change_date_list = list(item.get("org_change_date_list", []))
 
             issue_creation_date_list.sort()
@@ -230,6 +202,7 @@ class ContributorDevOrgRepo:
             code_commit_date_list.sort()
             fork_date_list.sort()
             star_date_list.sort()
+            watch_date_list.sort()
             if len(org_change_date_list) > 0:
                 sorted(org_change_date_list, key=lambda x: x["first_date"])
             is_bot = self.is_bot_by_author_name(repo, list(item.get("id_git_author_name_list", []))
@@ -254,6 +227,7 @@ class ContributorDevOrgRepo:
                     "first_code_commit_date": code_commit_date_list[0] if len(code_commit_date_list) > 0 else None,
                     "first_fork_date": fork_date_list[0] if len(fork_date_list) > 0 else None,
                     "first_star_date": star_date_list[0] if len(star_date_list) > 0 else None,
+                    "first_watch_date": watch_date_list[0] if len(watch_date_list) > 0 else None,
                     "issue_creation_date_list": issue_creation_date_list,
                     "pr_creation_date_list": pr_creation_date_list,
                     "issue_comments_date_list": issue_comments_date_list,
@@ -261,6 +235,7 @@ class ContributorDevOrgRepo:
                     "code_commit_date_list": code_commit_date_list,
                     "fork_date_list": fork_date_list,
                     "star_date_list": star_date_list,
+                    "watch_date_list": watch_date_list,
                     "last_contributor_date": item["last_contributor_date"],
                     "org_change_date_list": org_change_date_list,
                     "platform_type": platform_type,
@@ -298,6 +273,8 @@ class ContributorDevOrgRepo:
                 results = self.get_fork_enrich_data(index, repo, from_date, to_date, page_size, search_after)
             elif type == "star":
                 results = self.get_star_enrich_data(index, repo, from_date, to_date, page_size, search_after)
+            elif type == "watch":
+                results = self.get_watch_enrich_data(index, repo, from_date, to_date, page_size, search_after)
 
             count = count + len(results)
             if len(results) == 0:
@@ -595,6 +572,12 @@ class ContributorDevOrgRepo:
     def get_star_enrich_data(self, index, repo, from_date, to_date, page_size=100, search_after=[]):
         query_dsl = self.get_enrich_dsl("tag", repo, from_date, to_date, page_size, search_after)
         query_dsl["query"]["bool"]["must"].append({"match_phrase": {"type": "star"}})
+        results = self.client.search(index=index, body=query_dsl)["hits"]["hits"]
+        return results
+    
+    def get_watch_enrich_data(self, index, repo, from_date, to_date, page_size=100, search_after=[]):
+        query_dsl = self.get_enrich_dsl("tag", repo, from_date, to_date, page_size, search_after)
+        query_dsl["query"]["bool"]["must"].append({"match_phrase": {"type": "watch"}})
         results = self.client.search(index=index, body=query_dsl)["hits"]["hits"]
         return results
 
