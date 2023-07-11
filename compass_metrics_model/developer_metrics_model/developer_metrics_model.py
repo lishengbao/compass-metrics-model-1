@@ -61,35 +61,18 @@ class DeveloperMetricsModel(MetricsModel):
                     retention_set.add(contributor_name)
         return attraction_set, retention_set
 
-    def get_contributor_attraction_retention_silence_set(self, from_date, to_date, date_field_contributor_silence_dict,
-                                                         is_bot=False):
-        from_date_str = from_date.isoformat()
-        last_from_date_str = (to_date + str_to_offset("-90d")).isoformat()
-        to_date_str = to_date.isoformat()
-        attraction_silence_set = set()
-        retention_silence_set = set()
-        contributor_date_dict = self.get_contribution_activity_date_dict(date_field_contributor_silence_dict, is_bot)
-        for contributor_name, date_list in contributor_date_dict.items():
-            if len(list_sub(date_list, last_from_date_str, to_date_str)) == 0:
-                if from_date_str <= min(date_list) <= to_date_str:
-                    attraction_silence_set.add(contributor_name)
-                else:
-                    retention_silence_set.add(contributor_name)
-        return attraction_silence_set, retention_silence_set
 
-    def get_contributor_casual_regular_core_silence(self, from_date, to_date, date_field_contributor_dict,
+    def get_contributor_state(self, from_date, to_date, date_field_contributor_dict,
                                             date_field_contributor_silence_dict, is_bot=False,
                                             period="year"):
         last_contributor_dict = self.period_last_contributor_dict.get(period, {})
-        # 1:区分吸引活跃用户, 吸引静默用户 和 留存活跃用户, 留存静默用户
+        # 1:获取留存用户, 吸引用户, 静默用户
         attraction_set, retention_set = self.get_contributor_attraction_retention_set(
             from_date, to_date, date_field_contributor_dict, is_bot)
-        attraction_silence_set, retention_silence_set = self.get_contributor_attraction_retention_silence_set(
+        silence_set = self.get_contributor_silence_set(
             from_date, to_date, date_field_contributor_silence_dict, is_bot)
-        attraction_set = attraction_set - attraction_silence_set
-        retention_set = retention_set - retention_silence_set
 
-        # 2:根据全部用户划分出访客, 常客, 核心用户
+        # 2:根据活跃用户划分出访客, 常客, 核心用户
         activity_total_set, \
         activity_casual_set, \
         activity_regular_set, \
@@ -110,16 +93,14 @@ class DeveloperMetricsModel(MetricsModel):
         retention_regular_to_casual = last_contributor_dict.get("retention_regular_set", set()) & retention_casual_set
         # 6.3 留存核心转访客 = 历史核心 & 留存访客
         retention_core_to_casual = last_contributor_dict.get("retention_core_set", set()) & retention_casual_set
-        # 6.4 留存静默转访客 = 历史静默 & 留存访客
-        retention_silence_to_casual = last_contributor_dict.get("retention_silence_set", set()) & retention_casual_set
+        # 6.4 静默转访客 = 历史静默 & 留存访客
+        silence_to_casual = last_contributor_dict.get("silence_set", set()) & retention_casual_set
         # 6.5 留存吸引访客转访客 = 历史吸引访客 & 留存访客
         attraction_casual_to_casual = last_contributor_dict.get("attraction_casual_set", set()) & retention_casual_set
         # 6.6 留存吸引常客转访客 = 历史吸引常客 & 留存访客
         attraction_regular_to_casual = last_contributor_dict.get("attraction_regular_set", set()) & retention_casual_set
         # 6.7 留存吸引核心转访客 = 历史吸引核心 & 留存访客
         attraction_core_to_casual = last_contributor_dict.get("attraction_core_set", set()) & retention_casual_set
-        # 6.8 留存吸引静默转访客 = 历史吸引静默 & 留存访客
-        attraction_silence_to_casual = last_contributor_dict.get("attraction_silence_set", set()) & retention_casual_set
         retention_casual_dict = {
             "count": len(retention_casual_set),
             "list": [],
@@ -136,7 +117,7 @@ class DeveloperMetricsModel(MetricsModel):
                 "list": sorted(list(retention_core_to_casual))
             },
             "from_silence": {
-                "count": len(retention_silence_to_casual),
+                "count": len(silence_to_casual),
                 "list": []
             },
             "from_attraction_casual": {
@@ -150,10 +131,6 @@ class DeveloperMetricsModel(MetricsModel):
             "from_attraction_core": {
                 "count": len(attraction_core_to_casual),
                 "list": sorted(list(attraction_core_to_casual))
-            },
-            "from_attraction_silence": {
-                "count": len(attraction_silence_to_casual),
-                "list": []
             }
         }
 
@@ -165,8 +142,8 @@ class DeveloperMetricsModel(MetricsModel):
         retention_regular_to_regular = last_contributor_dict.get("retention_regular_set", set()) & retention_regular_set
         # 7.3 留存核心转常客 = 历史核心 & 留存常客
         retention_core_to_regular = last_contributor_dict.get("retention_core_set", set()) & retention_regular_set
-        # 7.4 留存静默转常客 = 历史静默 & 留存常客
-        retention_silence_to_regular = last_contributor_dict.get("retention_silence_set", set()) & retention_regular_set
+        # 7.4 静默转常客 = 历史静默 & 留存常客
+        silence_to_regular = last_contributor_dict.get("silence_set", set()) & retention_regular_set
         # 7.5 留存吸引访客转常客 = 历史吸引访客 & 留存常客
         attraction_casual_to_regular = last_contributor_dict.get("attraction_casual_set", set()) & retention_regular_set
         # 7.6 留存吸引常客转常客 = 历史吸引常客 & 留存常客
@@ -174,9 +151,6 @@ class DeveloperMetricsModel(MetricsModel):
                                                                   set()) & retention_regular_set
         # 7.7 留存吸引核心转常客 = 历史吸引核心 & 留存常客
         attraction_core_to_regular = last_contributor_dict.get("attraction_core_set", set()) & retention_regular_set
-        # 7.8 留存吸引静默转常客 = 历史吸引静默 & 留存常客
-        attraction_silence_to_regular = last_contributor_dict.get("attraction_silence_set",
-                                                                  set()) & retention_regular_set
         retention_regular_dict = {
             "count": len(retention_regular_set),
             "list": sorted(list(retention_regular_set)),
@@ -193,8 +167,8 @@ class DeveloperMetricsModel(MetricsModel):
                 "list": sorted(list(retention_core_to_regular))
             },
             "from_silence": {
-                "count": len(retention_silence_to_regular),
-                "list": sorted(list(retention_silence_to_regular))
+                "count": len(silence_to_regular),
+                "list": sorted(list(silence_to_regular))
             },
             "from_attraction_casual": {
                 "count": len(attraction_casual_to_regular),
@@ -207,10 +181,6 @@ class DeveloperMetricsModel(MetricsModel):
             "from_attraction_core": {
                 "count": len(attraction_core_to_regular),
                 "list": sorted(list(attraction_core_to_regular))
-            },
-            "from_attraction_silence": {
-                "count": len(attraction_silence_to_regular),
-                "list": sorted(list(attraction_silence_to_regular))
             }
         }
 
@@ -222,16 +192,14 @@ class DeveloperMetricsModel(MetricsModel):
         retention_regular_to_core = last_contributor_dict.get("retention_regular_set", set()) & retention_core_set
         # 8.3 留存核心转核心 = 历史核心 & 留存核心
         retention_core_to_core = last_contributor_dict.get("retention_core_set", set()) & retention_core_set
-        # 8.4 留存静默转核心 = 历史静默 & 留存核心
-        retention_silence_to_core = last_contributor_dict.get("retention_silence_set", set()) & retention_core_set
+        # 8.4 静默转核心 = 历史静默 & 留存核心
+        silence_to_core = last_contributor_dict.get("silence_set", set()) & retention_core_set
         # 8.5 留存吸引访客转核心 = 历史吸引访客 & 留存核心
         attraction_casual_to_core = last_contributor_dict.get("attraction_casual_set", set()) & retention_core_set
         # 8.6 留存吸引常客转核心 = 历史吸引常客 & 留存核心
         attraction_regular_to_core = last_contributor_dict.get("attraction_regular_set", set()) & retention_core_set
         # 8.8 留存吸引核心转核心 = 历史吸引核心 & 留存核心
         attraction_core_to_core = last_contributor_dict.get("attraction_core_set", set()) & retention_core_set
-        # 8.8 留存吸引静默转核心 = 历史吸引静默 & 留存核心
-        attraction_silence_to_core = last_contributor_dict.get("attraction_silence_set", set()) & retention_core_set
         retention_core_dict = {
             "count": len(retention_core_set),
             "list": sorted(list(retention_core_set)),
@@ -248,8 +216,8 @@ class DeveloperMetricsModel(MetricsModel):
                 "list": sorted(list(retention_core_to_core))
             },
             "from_silence": {
-                "count": len(retention_silence_to_core),
-                "list": sorted(list(retention_silence_to_core))
+                "count": len(silence_to_core),
+                "list": sorted(list(silence_to_core))
             },
             "from_attraction_casual": {
                 "count": len(attraction_casual_to_core),
@@ -262,64 +230,54 @@ class DeveloperMetricsModel(MetricsModel):
             "from_attraction_core": {
                 "count": len(attraction_core_to_core),
                 "list": sorted(list(attraction_core_to_core))
-            },
-            "from_attraction_silence": {
-                "count": len(attraction_silence_to_core),
-                "list": sorted(list(attraction_silence_to_core))
             }
         }
 
-        # 9: 留存静默
-        # 9.1 留存访客转静默 = 历史访客 & 留存静默
-        retention_casual_to_silence = last_contributor_dict.get("retention_casual_set", set()) & retention_silence_set
-        # 9.2 留存常客转静默 = 历史常客 & 留存静默
-        retention_regular_to_silence = last_contributor_dict.get("retention_regular_set", set()) & retention_silence_set
-        # 9.3 留存核心转静默 = 历史核心 & 留存静默
-        retention_core_to_silence = last_contributor_dict.get("retention_core_set", set()) & retention_silence_set
-        # 9.4 留存静默转静默 = 历史静默 & 留存静默
-        retention_silence_to_silence = last_contributor_dict.get("retention_silence_set", set()) & retention_silence_set
-        # 9.5 留存吸引访客转静默 = 历史吸引访客 & 留存静默
-        attraction_casual_to_silence = last_contributor_dict.get("attraction_casual_set", set()) & retention_silence_set
-        # 9.6 留存吸引常客转静默 = 历史吸引常客 & 留存静默
-        attraction_regular_to_silence = last_contributor_dict.get("attraction_regular_set", set()) & retention_silence_set
-        # 9.7 留存吸引核心转静默 = 历史吸引核心 & 留存静默
-        attraction_core_to_silence = last_contributor_dict.get("attraction_core_set", set()) & retention_silence_set
-        # 9.8 留存吸引静默转静默 = 历史吸引静默 & 留存静默
-        attraction_silence_to_silence = last_contributor_dict.get("attraction_silence_set", set()) & retention_silence_set
-        retention_silence_dict = {
-            "count": len(retention_silence_set),
+        # 9: 静默
+        # 9.1 访客转静默 = 历史访客 & 静默
+        casual_to_silence = last_contributor_dict.get("retention_casual_set", set()) & silence_set
+        # 9.2 常客转静默 = 历史常客 & 静默
+        regular_to_silence = last_contributor_dict.get("retention_regular_set", set()) & silence_set
+        # 9.3 核心转静默 = 历史核心 & 静默
+        core_to_silence = last_contributor_dict.get("retention_core_set", set()) & silence_set
+        # 9.4 静默转静默 = 历史静默 & 静默
+        silence_to_silence = last_contributor_dict.get("silence_set", set()) & silence_set
+        # 9.5 吸引访客转静默 = 历史吸引访客 & 静默
+        casual_to_silence = last_contributor_dict.get("attraction_casual_set", set()) & silence_set
+        # 9.6 吸引常客转静默 = 历史吸引常客 & 静默
+        regular_to_silence = last_contributor_dict.get("attraction_regular_set", set()) & silence_set
+        # 9.7 吸引核心转静默 = 历史吸引核心 & 静默
+        core_to_silence = last_contributor_dict.get("attraction_core_set", set()) & silence_set
+        silence_dict = {
+            "count": len(silence_set),
             "list": [],
             "from_casual": {
-                "count": len(retention_casual_to_silence),
+                "count": len(casual_to_silence),
                 "list": []
             },
             "from_regular": {
-                "count": len(retention_regular_to_silence),
-                "list": sorted(list(retention_regular_to_silence))
+                "count": len(regular_to_silence),
+                "list": sorted(list(regular_to_silence))
             },
             "from_core": {
-                "count": len(retention_core_to_silence),
-                "list": sorted(list(retention_core_to_silence))
+                "count": len(core_to_silence),
+                "list": sorted(list(core_to_silence))
             },
             "from_silence": {
-                "count": len(retention_silence_to_silence),
+                "count": len(silence_to_silence),
                 "list": []
             },
             "from_attraction_casual": {
-                "count": len(attraction_casual_to_silence),
+                "count": len(casual_to_silence),
                 "list": []
             },
             "from_attraction_regular": {
-                "count": len(attraction_regular_to_silence),
-                "list": sorted(list(attraction_regular_to_silence))
+                "count": len(regular_to_silence),
+                "list": sorted(list(regular_to_silence))
             },
             "from_attraction_core": {
-                "count": len(attraction_core_to_silence),
-                "list": sorted(list(attraction_core_to_silence))
-            },
-            "from_attraction_silence": {
-                "count": len(attraction_silence_to_silence),
-                "list": []
+                "count": len(core_to_silence),
+                "list": sorted(list(core_to_silence))
             }
         }
 
@@ -328,11 +286,10 @@ class DeveloperMetricsModel(MetricsModel):
             "retention_casual_set": retention_casual_set,
             "retention_regular_set": retention_regular_set,
             "retention_core_set": retention_core_set,
-            "retention_silence_set": retention_silence_set,
+            "silence_set": silence_set,
             "attraction_casual_set": attraction_casual_set,
             "attraction_regular_set": attraction_regular_set,
-            "attraction_core_set": attraction_core_set,
-            "attraction_silence_set": attraction_silence_set
+            "attraction_core_set": attraction_core_set
         }
         self.period_last_contributor_dict[period] = current_contributor_dict
 
@@ -340,7 +297,7 @@ class DeveloperMetricsModel(MetricsModel):
             "retention_casual": retention_casual_dict,
             "retention_regular": retention_regular_dict,
             "retention_core": retention_core_dict,
-            "retention_silence": retention_silence_dict,
+            "silence": silence_dict,
             "attraction_casual": {
                 "count": len(attraction_casual_set),
                 "list": []
@@ -352,92 +309,6 @@ class DeveloperMetricsModel(MetricsModel):
             "attraction_core": {
                 "count": len(attraction_core_set),
                 "list": sorted(list(attraction_core_set))
-            },
-            "attraction_silence": {
-                "count": len(attraction_silence_set),
-                "list": []
-            }
-        }
-        return result_dict
-
-    def get_contributor_silence(self, from_date, to_date, date_field_contributor_silence_dict, is_bot=False,
-                                period="year"):
-        date_contributor_dict = self.period_contributor_dict.get(period, {})
-        last_period_str = (from_date + str_to_offset("-" + self.period_dict[period]["offset"])).strftime("%Y-%m-%d")
-        last_contributor_dict = date_contributor_dict.get(last_period_str, {})
-        # 1:区分吸引静默用户 和 留存静默用户
-        attraction_silence_set, retention_silence_set = self.get_contributor_attraction_retention_silence_set(
-            from_date, to_date, date_field_contributor_silence_dict, is_bot)
-        # 2: 吸引静默用户
-        # 3: 留存静默用户
-        # 3.1 留存访客转静默 = 历史访客 & 留存静默
-        retention_casual_to_silence = last_contributor_dict.get("retention_casual_set", set()) & retention_silence_set
-        # 3.2 留存常客转静默 = 历史常客 & 留存静默
-        retention_regular_to_silence = last_contributor_dict.get("retention_regular_set", set()) & retention_silence_set
-        # 3.3 留存核心转静默 = 历史核心 & 留存静默
-        retention_core_to_silence = last_contributor_dict.get("retention_core_set", set()) & retention_silence_set
-        # 3.4 留存静默转静默 = 历史静默 & 留存静默
-        retention_silence_to_silence = last_contributor_dict.get("retention_silence_set", set()) & retention_silence_set
-        # 3.5 留存吸引访客转静默 = 历史吸引访客 & 留存静默
-        attraction_casual_to_silence = last_contributor_dict.get("attraction_casual_set", set()) & retention_silence_set
-        # 3.6 留存吸引常客转静默 = 历史吸引常客 & 留存静默
-        attraction_regular_to_silence = last_contributor_dict.get("attraction_regular_set",
-                                                                  set()) & retention_silence_set
-        # 3.7 留存吸引核心转静默 = 历史吸引核心 & 留存静默
-        attraction_core_to_silence = last_contributor_dict.get("attraction_core_set", set()) & retention_silence_set
-        # 3.8 留存吸引静默转静默 = 历史吸引静默 & 留存静默
-        attraction_silence_to_silence = last_contributor_dict.get("attraction_silence_set",
-                                                                  set()) & retention_silence_set
-        retention_silence_dict = {
-            "count": len(retention_silence_set),
-            "list": [],
-            "from_casual": {
-                "count": len(retention_casual_to_silence),
-                "list": []
-            },
-            "from_regular": {
-                "count": len(retention_regular_to_silence),
-                "list": sorted(list(retention_regular_to_silence))
-            },
-            "from_core": {
-                "count": len(retention_core_to_silence),
-                "list": sorted(list(retention_core_to_silence))
-            },
-            "from_silence": {
-                "count": len(retention_silence_to_silence),
-                "list": []
-            },
-            "from_attraction_casual": {
-                "count": len(attraction_casual_to_silence),
-                "list": []
-            },
-            "from_attraction_regular": {
-                "count": len(attraction_regular_to_silence),
-                "list": sorted(list(attraction_regular_to_silence))
-            },
-            "from_attraction_core": {
-                "count": len(attraction_core_to_silence),
-                "list": sorted(list(attraction_core_to_silence))
-            },
-            "from_attraction_silence": {
-                "count": len(attraction_silence_to_silence),
-                "list": []
-            }
-        }
-
-        # 4:保存当前周期数据
-        current_period_str = from_date.strftime("%Y-%m-%d")
-        current_contributor_dict = date_contributor_dict.get(current_period_str, {})
-        current_contributor_dict["attraction_silence_set"] = attraction_silence_set
-        current_contributor_dict["retention_silence_set"] = retention_silence_set
-        date_contributor_dict[current_period_str] = current_contributor_dict
-        self.period_contributor_dict[period] = date_contributor_dict
-
-        result_dict = {
-            "retention_silence": retention_silence_dict,
-            "attraction_silence": {
-                "count": len(attraction_silence_set),
-                "list": []
             }
         }
         return result_dict
@@ -499,7 +370,7 @@ class DeveloperMetricsModel(MetricsModel):
                                                                                    repos_list, "watch_date_list",
                                                                                    "first_watch_date")
 
-                contributor_casual_regular_core_silence = self.get_contributor_casual_regular_core_silence(
+                contributor_state = self.get_contributor_state(
                     date, to_date, {
                         "issue_creation_date_list": issue_creation_contributor_list,
                         "pr_creation_date_list": pr_creation_contributor_list,
@@ -529,14 +400,13 @@ class DeveloperMetricsModel(MetricsModel):
                     'label': label,
                     'model_name': self.model_name,
                     'period': period_key,
-                    'retention_casual': contributor_casual_regular_core_silence["retention_casual"],
-                    'retention_regular': contributor_casual_regular_core_silence["retention_regular"],
-                    'retention_core': contributor_casual_regular_core_silence["retention_core"],
-                    'retention_silence': contributor_casual_regular_core_silence["retention_silence"],
-                    'attraction_casual': contributor_casual_regular_core_silence["attraction_casual"],
-                    'attraction_regular': contributor_casual_regular_core_silence["attraction_regular"],
-                    'attraction_core': contributor_casual_regular_core_silence["attraction_core"],
-                    'attraction_silence': contributor_casual_regular_core_silence["attraction_silence"],
+                    'retention_casual': contributor_state["retention_casual"],
+                    'retention_regular': contributor_state["retention_regular"],
+                    'retention_core': contributor_state["retention_core"],
+                    'silence': contributor_state["silence"],
+                    'attraction_casual': contributor_state["attraction_casual"],
+                    'attraction_regular': contributor_state["attraction_regular"],
+                    'attraction_core': contributor_state["attraction_core"],
                     'grimoire_creation_date': date.isoformat(),
                     'metadata__enriched_on': datetime_utcnow().isoformat(),
                     **self.custom_fields

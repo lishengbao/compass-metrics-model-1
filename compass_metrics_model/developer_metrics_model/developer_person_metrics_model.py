@@ -48,7 +48,7 @@ class DeveloperPersonMetricsModel(MetricsModel):
         self.contributor_track_dict = {}
         self.contributor_info_dict = {}
 
-    def get_contributor_info(self, date_field_contributor_dict, is_bot=False):
+    def get_contributor_person_info(self, date_field_contributor_dict, is_bot=False):
         contributor_list = [item for sublist in date_field_contributor_dict.values() for item in sublist]
         for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
             if is_bot is None or contributor["is_bot"] == is_bot:
@@ -59,6 +59,8 @@ class DeveloperPersonMetricsModel(MetricsModel):
                 elif contributor.get("id_git_author_name_list") and len(
                         contributor.get("id_git_author_name_list")) > 0:
                     contributor_name = contributor["id_git_author_name_list"][0]
+                if contributor_name in ["vscodebot[bot]", "alexbarten", "kiranshila", "michaelvanstraten", "xiangpengzhao", "Alexendoo", "jnicklas" ,"Box-Of-Hats"]:
+                    continue
                 contributor_info = self.contributor_info_dict.get(contributor_name, {})
                 org_info = contributor["org_change_date_list"]
                 if contributor_info.get("org_info", None):
@@ -67,20 +69,7 @@ class DeveloperPersonMetricsModel(MetricsModel):
                 self.contributor_info_dict[contributor_name] = contributor_info
 
 
-    def get_contributor_silence_set(self, from_date, to_date, date_field_contributor_silence_dict,
-                                                         is_bot=False):
-        from_date_str = from_date.isoformat()
-        last_from_date_str = (to_date + str_to_offset("-90d")).isoformat()
-        to_date_str = to_date.isoformat()
-        silence_set = set()
-        contributor_date_dict = self.get_contribution_activity_date_dict(date_field_contributor_silence_dict, is_bot)
-        for contributor_name, date_list in contributor_date_dict.items():
-            if len(list_sub(date_list, last_from_date_str, to_date_str)) == 0:
-                silence_set.add(contributor_name)
-        return silence_set
-
-
-    def get_contributor_person_casual_regular_core_silence(self, from_date, to_date, date_field_contributor_dict,
+    def get_contributor_person_state(self, from_date, to_date, date_field_contributor_dict,
                                             date_field_contributor_silence_dict, is_bot=False,
                                             period="year"):
 
@@ -91,13 +80,10 @@ class DeveloperPersonMetricsModel(MetricsModel):
         activity_core_set = self.get_freq_contributor_activity_set(from_date, to_date, date_field_contributor_dict,
                                                                    is_bot,
                                                                    period)
-        casual_set = activity_casual_set - silence_set
-        regular_set = activity_regular_set - silence_set
-        core_set = activity_core_set - silence_set
 
-        casual_dict = {key: "casual" for key in casual_set}
-        regular_dict = {key: "regular" for key in regular_set}
-        core_dict = {key: "core" for key in core_set}
+        casual_dict = {key: "casual" for key in activity_casual_set}
+        regular_dict = {key: "regular" for key in activity_regular_set}
+        core_dict = {key: "core" for key in activity_core_set}
         silence_dict = {key: "silence" for key in silence_set}
 
         total_dict = {**casual_dict, **regular_dict, **core_dict, **silence_dict}
@@ -122,9 +108,9 @@ class DeveloperPersonMetricsModel(MetricsModel):
             for date in date_list:
                 logger.info(f"{str(date)}--{self.model_name}--{label}--{period_key}")
                 to_date = date + str_to_offset(period_value["offset"])
-                created_since = self.created_since(to_date, repos_list)
-                if created_since is None:
-                    continue
+                # created_since = self.created_since(to_date, repos_list)
+                # if created_since is None:
+                #     continue
                 issue_creation_contributor_list = self.get_contributor_list(date, to_date, repos_list,
                                                                             "issue_creation_date_list")
                 pr_creation_contributor_list = self.get_contributor_list(date, to_date, repos_list,
@@ -179,7 +165,7 @@ class DeveloperPersonMetricsModel(MetricsModel):
                     "fork_date_list": fork_contributor_list,
                     "watch_date_list": watch_contributor_list
                 }
-                self.get_contributor_person_casual_regular_core_silence(
+                self.get_contributor_person_state(
                     date, to_date, date_field_contributor_dict, {
                         "issue_creation_date_list": issue_creation_contributor_silence_list,
                         "pr_creation_date_list": pr_creation_contributor_silence_list,
@@ -191,7 +177,7 @@ class DeveloperPersonMetricsModel(MetricsModel):
                         "watch_date_list": watch_contributor_silence_list
                     }, period=period_key)
 
-                self.get_contributor_info(date_field_contributor_dict)
+                self.get_contributor_person_info(date_field_contributor_dict)
 
         for key, value in self.contributor_track_dict.items():
             uuid_value = get_uuid(key, self.community, level, label, self.model_name, type,

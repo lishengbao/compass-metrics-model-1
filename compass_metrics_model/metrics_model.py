@@ -281,7 +281,7 @@ class MetricsModel:
         else:
             self.custom_fields = {}
             self.custom_fields_hash = None
-
+        
     def metrics_model_metrics(self, elastic_url):
         is_https = urlparse(elastic_url).scheme == 'https'
         self.es_in = Elasticsearch(
@@ -776,55 +776,30 @@ class MetricsModel:
                 elif contributor.get("id_git_author_name_list") and len(
                         contributor.get("id_git_author_name_list")) > 0:
                     contributor_name = contributor["id_git_author_name_list"][0]
+                if contributor_name in ["vscodebot[bot]", "alexbarten", "kiranshila", "michaelvanstraten", "xiangpengzhao", "Alexendoo", "jnicklas" ,"Box-Of-Hats"]:
+                    continue
                 contribution_date = []
                 for date_field in date_field_list:
                     contribution_date.extend(contributor.get(date_field, []))
                 contributor_date_dict[contributor_name] = sorted(contributor_date_dict.get(contributor_name, [])
                                                                      + contribution_date)
         return contributor_date_dict
-
+    
     def get_contribution_activity_casual_regular_core_set(self, from_date, to_date, contributor_date_dict,
                                                           observe_contributor_date_dict, period="week"):
         """Distinguish between active contributors as casual, regular, core"""
 
-        from_date = from_date.isoformat()
-        to_date = to_date.isoformat()
-        contributor_date_dict = {k: v for k, v in contributor_date_dict.items() if len(list_sub(v, from_date, to_date)) > 0}
-        observe_contributor_date_dict = {k: v for k, v in observe_contributor_date_dict.items() if len(list_sub(v, from_date, to_date)) > 0}
+        contributor_date_dict = {k: v for k, v in contributor_date_dict.items() if
+                                 len(list_sub(v, from_date.isoformat(), to_date.isoformat())) > 0}
+        observe_contributor_date_dict = {k: v for k, v in observe_contributor_date_dict.items() if
+                                         len(list_sub(v, from_date.isoformat(), to_date.isoformat())) > 0}
 
-        def get_activity_regular_set(from_date, to_date, contributor_date_dict):
+        def get_activity_regular_set(from_date, to_date, contributor_date_dict, activity_core_set):
             """
                 Those who contributed at least once every 30 days for the last 90 days,
                 or made at least 4 contributions in the last 90 days
             """
-            result_set = set()
-            for contributor, contributor_date_list in contributor_date_dict.items():
-                for contributor_date in list_sub(contributor_date_list, from_date, to_date):
-                    contributor_date_utc = datetime_to_utc(str_to_datetime(contributor_date))
-                    last_30_days_date = (contributor_date_utc - timedelta(days=30)).isoformat()
-                    last_60_days_date = (contributor_date_utc - timedelta(days=60)).isoformat()
-                    last_90_days_date = (contributor_date_utc - timedelta(days=90)).isoformat()
-                    last_90_days_contribution_date_list = list_sub(contributor_date_list, last_90_days_date,
-                                                                   contributor_date)
-                    last_90_days_contribution_date_list.append(contributor_date)
-                    if len(last_90_days_contribution_date_list) >= 4:
-                        result_set.add(contributor)
-                        break
-                    if len(last_90_days_contribution_date_list) == 3 and \
-                            len(list_sub(last_90_days_contribution_date_list, last_90_days_date,
-                                         last_60_days_date)) > 1 and \
-                            len(list_sub(last_90_days_contribution_date_list, last_60_days_date,
-                                         last_30_days_date)) > 1:
-                        result_set.add(contributor)
-                        break
-            return result_set
-
-        def get_activity_core_set(from_date, to_date, contributor_date_dict):
-            """
-                80% of all contributions for the quarter/year are made by the smallest group of people,
-                which is called the quarter/year core contributors
-            """
-            contribution_count_dict = {k: len(list_sub(v, from_date, to_date)) for k, v in
+            contribution_count_dict = {k: len(list_sub(v, from_date.isoformat(), to_date.isoformat())) for k, v in
                                        contributor_date_dict.items()}
             sorted_dict = {k: v for k, v in
                            sorted(contribution_count_dict.items(), key=lambda item: item[1], reverse=True)}
@@ -836,18 +811,47 @@ class MetricsModel:
                 result_set.add(k)
                 if current_sum >= target_sum:
                     break
+            
+            for contributor, contributor_date_list in contributor_date_dict.items():
+                contributor_date = list_sub(contributor_date_list, from_date.isoformat(), to_date.isoformat())
+                month_num = 0
+                date_list = get_date_list(from_date.isoformat(), to_date.isoformat(), "MS")
+                for date in date_list:
+                    month_from = date
+                    month_end = date + str_to_offset("1m")
+                    if month_end > to_date:
+                        break
+                    if len(list_sub(contributor_date, month_from.isoformat(), month_end.isoformat())) > 0: 
+                        month_num += 1
+                        if month_num == 8:
+                            result_set.add(contributor)
+                            break
+            return result_set - activity_core_set
+            
+
+        def get_activity_core_set(from_date, to_date, contributor_date_dict):
+            """
+                80% of all contributions for the quarter/year are made by the smallest group of people,
+                which is called the quarter/year core contributors
+            """
+            contribution_count_dict = {k: len(list_sub(v, from_date.isoformat(), to_date.isoformat())) for k, v in
+                                       contributor_date_dict.items()}
+            sorted_dict = {k: v for k, v in
+                           sorted(contribution_count_dict.items(), key=lambda item: item[1], reverse=True)}
+            target_sum = sum(sorted_dict.values()) * 0.5
+            current_sum = 0
+            result_set = set()
+            for k, v in sorted_dict.items():
+                current_sum += v
+                result_set.add(k)
+                if current_sum >= target_sum:
+                    break
             return result_set
 
         activity_total_set = set(contributor_date_dict.keys()) | set(observe_contributor_date_dict.keys())
-        activity_regular_set = get_activity_regular_set(from_date, to_date, contributor_date_dict)
-        activity_casual_set = activity_total_set - activity_regular_set
-
-        activity_core_set = set()
-        if period == "seasonal" or period == "year":
-            contributor_regular_date_dict = {k: v for k, v in contributor_date_dict.items() if
-                                             k in activity_regular_set}
-            activity_core_set = get_activity_core_set(from_date, to_date, contributor_regular_date_dict)
-            activity_regular_set = activity_regular_set - activity_core_set
+        activity_core_set = get_activity_core_set(from_date, to_date, contributor_date_dict)
+        activity_regular_set = get_activity_regular_set(from_date, to_date, contributor_date_dict, activity_core_set)            
+        activity_casual_set = activity_total_set - activity_core_set - activity_regular_set
 
         return activity_total_set, activity_casual_set, activity_regular_set, activity_core_set
 
@@ -994,6 +998,16 @@ class MetricsModel:
                             break
         return attrition_total_set, attrition_casual_set, attrition_regular_set, attrition_core_set
 
+    def get_contributor_silence_set(self, from_date, to_date, date_field_contributor_silence_dict,
+                                                         is_bot=False):
+        from_date_str = from_date.isoformat()
+        to_date_str = to_date.isoformat()
+        silence_set = set()
+        contributor_date_dict = self.get_contribution_activity_date_dict(date_field_contributor_silence_dict, is_bot)
+        for contributor_name, date_list in contributor_date_dict.items():
+            if len(list_sub(date_list, from_date_str, to_date_str)) == 0:
+                silence_set.add(contributor_name)
+        return silence_set
 
 
 class ActivityMetricsModel(MetricsModel):
