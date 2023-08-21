@@ -17,13 +17,13 @@ from compass_common.utils.str_utils import str_is_not_empty
 logger = logging.getLogger(__name__)
 urllib3.disable_warnings()
 page_size = 1000
-MAX_BULK_UPDATE_SIZE = 500
+MAX_BULK_UPDATE_SIZE = 5000
 
 exclude_field_list = ["unknown", "-- undefined --"]
 
 def exclude_special_str(str):
     """ Exclude special characters """
-    regEx = "[`~!#$%^&*()+=|{}':;',\\[\\]<>/?~！#￥%……&*（）——+|{}【】‘；：”“’\"\"。 ，、？_-]"
+    regEx = "[`~!@#$%^&*()+=|{}':;',\\[\\].<>/?~！@#￥%……&*（）——+|{}【】‘；：”“’\"\"。 ，、？_-]"
     return re.sub(regEx, "",str)
 
 def get_organizations_info(file_path):
@@ -59,7 +59,7 @@ def get_bots_info(file_path):
             for repo, repo_values in community_values["repo"].items():
                 if repo_values.get("author_name") and len(repo_values.get("author_name")) > 0:
                     repo_dict[repo] = repo_values["author_name"]
-
+        
     bots_dict = {
         "common": common,
         "community": community_dict,
@@ -117,13 +117,14 @@ def get_latest_date(date1, date2):
 class ContributorDevOrgRepo:
     def __init__(self, json_file, identities_config_file, organizations_config_file, bots_config_file, issue_index,
                  pr_index, issue_comments_index, pr_comments_index, git_index, contributors_index, from_date, end_date,
-                 repo_index, company=None, event_index=None, stargazer_index=None, fork_index=None):
+                 repo_index, observe_index=None, company=None, event_index=None):
         self.issue_index = issue_index
         self.pr_index = pr_index
         self.issue_comments_index = issue_comments_index
         self.pr_comments_index = pr_comments_index
         self.git_index = git_index
         self.repo_index = repo_index
+        self.observe_index = observe_index
         self.contributors_index = contributors_index
         self.from_date = from_date
         self.end_date = end_date
@@ -132,15 +133,12 @@ class ContributorDevOrgRepo:
         self.bots_dict = get_bots_info(bots_config_file)
         self.company = None if company or company == 'None' else company
         self.event_index = event_index
-        self.stargazer_index = stargazer_index
-        self.fork_index = fork_index
         self.client = None
         self.all_repo = get_all_repo(json_file, 'gitee' if 'gitee' in issue_index else 'github')
         self.platform_item_id_dict = {}
         self.platform_item_identity_dict = {}
         self.git_item_id_dict = {}
         self.git_item_identity_dict = {}
-        self.date_field_list = []
 
     def run(self, elastic_url):
         self.client = get_elasticsearch_client(elastic_url)
@@ -157,74 +155,68 @@ class ContributorDevOrgRepo:
         self.platform_item_identity_dict = {}
         self.git_item_id_dict = {}
         self.git_item_identity_dict = {}
-        self.date_field_list = []
+
+        leader_set = set(self.get_repo_leader_list(repo))
+        print("leader_set:" + str(len(leader_set)))
+
         platform_index_type_dict = {
-            "pr_LabeledEvent": {"index": self.event_index, "date_field": "pr_label_date_list"},
-            "pr_ClosedEvent": {"index": self.event_index, "date_field": "pr_close_date_list"},
-            "pr_AssignedEvent": {"index": self.event_index, "date_field": "pr_assign_date_list"},
-            "issue_LabeledEvent": {"index": self.event_index, "date_field": "issue_label_date_list"},
-            "issue": {"index": self.issue_index, "date_field": "issue_creation_date_list"},
-            "pr": {"index": self.pr_index, "date_field": "pr_creation_date_list"},
-            "issue_comments": {"index": self.issue_comments_index, "date_field": "issue_comments_date_list"},
-            "pr_comments": {"index": self.pr_comments_index, "date_field": "pr_comments_date_list"},
-            "fork": {"index": self.fork_index, "date_field": "fork_date_list"},
-            "star": {"index": self.stargazer_index, "date_field": "star_date_list"},
-            # "watch": {"index": self.observe_index, "date_field": "watch_date_list"},
-            "issue_ClosedEvent": {"index": self.event_index, "date_field": "issue_close_date_list"},
-            "issue_ReopenedEvent": {"index": self.event_index, "date_field": "issue_reopen_date_list"},
-            "issue_AssignedEvent": {"index": self.event_index, "date_field": "issue_assign_date_list"},
-            "issue_MilestonedEvent": {"index": self.event_index, "date_field": "issue_milestone_date_list"},
-            "issue_MarkedAsDuplicateEvent": {"index": self.event_index, "date_field": "issue_mark_as_duplicate_date_list"},
-            "issue_TransferredEvent": {"index": self.event_index, "date_field": "issue_transfer_date_list"},
-            "issue_LockedEvent": {"index": self.event_index, "date_field": "issue_lock_date_list"},
-            "pr_ReopenedEvent": {"index": self.event_index, "date_field": "pr_reopen_date_list"},
-            "pr_MilestonedEvent": {"index": self.event_index, "date_field": "pr_milestone_date_list"},
-            "pr_MarkedAsDuplicateEvent": {"index": self.event_index, "date_field": "pr_mark_as_duplicate_date_list"},
-            "pr_TransferredEvent": {"index": self.event_index, "date_field": "pr_transfer_date_list"},
-            "pr_LockedEvent": {"index": self.event_index, "date_field": "pr_lock_date_list"},
-            "pr_MergedEvent": {"index": self.event_index, "date_field": "pr_merge_date_list"},
-            "pr_PullRequestReview": {"index": self.event_index, "date_field": "pr_review_date_list"},
+            "issue": [self.issue_index, "issue_creation_date_list"],
+            "pr": [self.pr_index, "pr_creation_date_list"],
+            "issue_comments": [self.issue_comments_index, "issue_comments_date_list"],
+            "pr_comments": [self.pr_comments_index, "pr_review_date_list"],
+            "fork": [self.observe_index, "fork_date_list"],
+            "star": [self.observe_index, "star_date_list"],
+            "watch": [self.observe_index, "watch_date_list"]
         }
-        if self.git_index is not None:
-            self.date_field_list.append("code_commit_date_list")
-            self.date_field_list.append("code_direct_commit_date_list")
-            self.processing_commit_data(self.git_index, repo, self.from_date, self.end_date)
         for index_key, index_values in platform_index_type_dict.items():
-            self.date_field_list.append(index_values["date_field"])
-            self.processing_platform_data(index_values["index"], repo, self.from_date, self.end_date, index_values["date_field"], type=index_key)
-        
+            if index_values[0] is not None:
+                self.processing_platform_data(index_values[0], repo, self.from_date, self.end_date, index_values[1], type=index_key)
+        if self.git_index is not None:
+            self.processing_commit_data(self.git_index, repo, self.from_date, self.end_date)
         if len(self.platform_item_id_dict) == 0 and len(self.git_item_id_dict) == 0:
             logger.info(repo + " finish count:" + str(0) + " " + str(datetime.now() - start_time))
             return
-        all_items_dict = self.get_merge_platform_git_contributor_data(repo, self.git_item_id_dict, self.platform_item_id_dict)
-        # old_items_dict = self.query_contributors_org_dict(self.contributors_index, repo)
-        # all_items_dict, merge_item_id_set = self.get_merge_old_new_contributor_data(old_items_dict, new_items_dict)
+        
+        new_items_dict = self.get_merge_platform_git_contributor_data(self.git_item_id_dict, self.platform_item_id_dict)
+        old_items_dict = self.query_contributors_org_dict(self.contributors_index, repo)
+        all_items_dict, merge_item_id_set = self.get_merge_old_new_contributor_data(old_items_dict, new_items_dict)
         logger.info(repo + "  save data...")
-        # if len(merge_item_id_set) > 0:
-        #     merge_item_id_list = list_of_groups(list(merge_item_id_set), 100)
-        #     for merge_id in merge_item_id_list:
-        #         query = self.get_contributors_dsl(repo, "uuid", merge_id)
-        #         self.client.delete_by_query(index=self.contributors_index, body=query)
+        if len(merge_item_id_set) > 0:
+            merge_item_id_list = list_of_groups(list(merge_item_id_set), 100)
+            for merge_id in merge_item_id_list:
+                query = self.get_contributors_dsl(repo, "uuid", merge_id)
+                self.client.delete_by_query(index=self.contributors_index, body=query)
         all_bulk_data = []
         community =repo.split("/")[-2]
         platform_type = repo.split("/")[-3].split(".")[0]
-        # leader_set = set(self.get_repo_leader_list(repo))
-        # print("leader_set:"+str(len(leader_set)))
+        leader_set = set(self.get_repo_leader_list(repo))
+        print("leader_set:"+str(len(leader_set)))
         for item in all_items_dict.values():
-            contribution_date_field_dict = {}
-            for date_field in self.date_field_list:
-                contribution_date_list = list(item.get(date_field, []))
-                contribution_date_list.sort()
-                contribution_first_date = contribution_date_list[0] if len(contribution_date_list) > 0 else None
-                contribution_date_field_dict[date_field] = contribution_date_list
-                contribution_date_field_dict["first_" + date_field.replace("_list", "")] = contribution_first_date
-
+            issue_creation_date_list = list(item.get("issue_creation_date_list", []))
+            pr_creation_date_list = list(item.get("pr_creation_date_list", []))
+            issue_comments_date_list = list(item.get("issue_comments_date_list", []))
+            pr_review_date_list = list(item.get("pr_review_date_list", []))
+            code_commit_date_list = list(item.get("code_commit_date_list", []))
+            fork_date_list = list(item.get("fork_date_list", []))
+            star_date_list = list(item.get("star_date_list", []))
+            watch_date_list = list(item.get("watch_date_list", []))
             org_change_date_list = list(item.get("org_change_date_list", []))
+
+            issue_creation_date_list.sort()
+            pr_creation_date_list.sort()
+            issue_comments_date_list.sort()
+            pr_review_date_list.sort()
+            code_commit_date_list.sort()
+            fork_date_list.sort()
+            star_date_list.sort()
+            watch_date_list.sort()
             if len(org_change_date_list) > 0:
                 sorted(org_change_date_list, key=lambda x: x["first_date"])
             is_bot = self.is_bot_by_author_name(repo, list(item.get("id_git_author_name_list", []))
                                                 + list(item.get("id_platform_login_name_list", []))
                                                 + list(item.get("id_platform_author_name_list", [])))
+            is_leader = True if len(leader_set & (item.get("id_platform_login_name_list", set())
+                                                  .update(item.get("id_git_author_name_list", set())))) > 0 else False
 
             contributor_data = {
                 "_index": self.contributors_index,
@@ -233,12 +225,26 @@ class ContributorDevOrgRepo:
                     "uuid": item.get("uuid"),
                     "id_git_author_name_list": list(item.get("id_git_author_name_list", [])),
                     "id_git_author_email_list": list(item.get("id_git_author_email_list", [])),
-                    "id_platform_login_author_name_list": list(item.get("id_platform_login_author_name_list", [])),
                     "id_platform_login_name_list": list(item.get("id_platform_login_name_list", [])),
                     "id_platform_author_name_list": list(item.get("id_platform_author_name_list", [])),
                     "id_platform_author_email_list": list(item.get("id_platform_author_email_list", [])),
                     "id_identity_list": list(item.get("id_identity_list", [])),
-                    **contribution_date_field_dict,
+                    "first_issue_creation_date": issue_creation_date_list[0] if len(issue_creation_date_list) > 0 else None,
+                    "first_pr_creation_date": pr_creation_date_list[0] if len(pr_creation_date_list) > 0 else None,
+                    "first_issue_comments_date": issue_comments_date_list[0] if len(issue_comments_date_list) > 0 else None,
+                    "first_pr_review_date": pr_review_date_list[0] if len(pr_review_date_list) > 0 else None,
+                    "first_code_commit_date": code_commit_date_list[0] if len(code_commit_date_list) > 0 else None,
+                    "first_fork_date": fork_date_list[0] if len(fork_date_list) > 0 else None,
+                    "first_star_date": star_date_list[0] if len(star_date_list) > 0 else None,
+                    "first_watch_date": watch_date_list[0] if len(watch_date_list) > 0 else None,
+                    "issue_creation_date_list": issue_creation_date_list,
+                    "pr_creation_date_list": pr_creation_date_list,
+                    "issue_comments_date_list": issue_comments_date_list,
+                    "pr_review_date_list": pr_review_date_list,
+                    "code_commit_date_list": code_commit_date_list,
+                    "fork_date_list": fork_date_list,
+                    "star_date_list": star_date_list,
+                    "watch_date_list": watch_date_list,
                     "last_contributor_date": item["last_contributor_date"],
                     "org_change_date_list": org_change_date_list,
                     "platform_type": platform_type,
@@ -247,18 +253,19 @@ class ContributorDevOrgRepo:
                     "community": community,
                     "repo_name": repo,
                     "is_bot": is_bot,
-                    "update_at_date": datetime_utcnow().isoformat()
+                    "is_leader": is_leader,
+                    "update_at_date": datetime_utcnow().isoformat()        
                 }
             }
             all_bulk_data.append(contributor_data)
             if len(all_bulk_data) > MAX_BULK_UPDATE_SIZE:
-                helpers.bulk(client=self.client, actions=all_bulk_data, request_timeout=100)
+                helpers.bulk(client=self.client, actions=all_bulk_data)
                 all_bulk_data = []
-        helpers.bulk(client=self.client, actions=all_bulk_data, request_timeout=100)
+        helpers.bulk(client=self.client, actions=all_bulk_data)
         logger.info(repo + " finish count:" + str(len(all_items_dict)) + " " + str(datetime.now() - start_time))
 
     def processing_platform_data(self, index, repo, from_date, to_date, date_field, type="issue"):
-        logger.info(f"{repo} {index}  {type} processing...")
+        logger.info(repo + " " + index + " processing...")
         search_after = []
         count = 0
         start_time = datetime.now()
@@ -272,16 +279,12 @@ class ContributorDevOrgRepo:
                 results = self.get_issue_comment_enrich_data(index, repo, from_date, to_date, page_size, search_after)
             elif type == "pr_comments":
                 results = self.get_pr_comment_enrich_data(index, repo, from_date, to_date, page_size, search_after)
-            elif type in ["fork", "star", "watch"]:
-                results = self.get_observe_enrich_data(index, repo, from_date, to_date, page_size, search_after)
-            elif type in ["issue_LabeledEvent", "issue_ClosedEvent", "issue_ReopenedEvent", "issue_AssignedEvent",
-                          "issue_MilestonedEvent", "issue_MarkedAsDuplicateEvent", "issue_TransferredEvent",
-                          "issue_LockedEvent"]:
-                results = self.get_issue_event_enrich_data(index, repo, from_date, to_date, page_size, search_after, type.replace("issue_", ""))
-            elif type in ["pr_LabeledEvent", "pr_ClosedEvent", "pr_ReopenedEvent", "pr_AssignedEvent",
-                          "pr_MilestonedEvent", "pr_MarkedAsDuplicateEvent", "pr_TransferredEvent",
-                          "pr_LockedEvent", "pr_MergedEvent", "pr_PullRequestReview"]:
-                results = self.get_pr_event_enrich_data(index, repo, from_date, to_date, page_size, search_after, type.replace("pr_", ""))
+            elif type == "fork":
+                results = self.get_fork_enrich_data(index, repo, from_date, to_date, page_size, search_after)
+            elif type == "star":
+                results = self.get_star_enrich_data(index, repo, from_date, to_date, page_size, search_after)
+            elif type == "watch":
+                results = self.get_watch_enrich_data(index, repo, from_date, to_date, page_size, search_after)
 
             count = count + len(results)
             if len(results) == 0:
@@ -291,13 +294,10 @@ class ContributorDevOrgRepo:
                 source = result["_source"]
                 grimoire_creation_date = datetime_to_utc(
                     str_to_datetime(source["grimoire_creation_date"]).replace(tzinfo=None) + timedelta(microseconds=int(source["uuid"], 16) % 100000)).isoformat()
-                user_login = source.get("user_login") if source.get("user_login") else source.get("actor_username")
-                if user_login is None:
-                    continue
                 id_identity_list = [
-                    user_login,
+                    source.get("user_login"),
                     source.get("author_name"),
-                    source.get("user_email")
+                    get_email_prefix_domain(source.get("user_email"))[0] if source.get("user_email") else None
                 ]
                 id_identity_list = set(
                     [exclude_special_str(x.lower()) for x in id_identity_list if str_is_not_empty(x) and x.lower() not in exclude_field_list and str_is_not_empty(exclude_special_str(x)) ])
@@ -314,12 +314,9 @@ class ContributorDevOrgRepo:
                         }
                         org_change_date_list.append(org_date)
 
-
-                login_author_name = (user_login if user_login else "") + " &&& " + (source.get("author_name") if source.get("author_name") else "")
                 item = {
-                    "uuid": get_uuid(repo, "platform", user_login, source.get("author_name"), source.get("user_email"), grimoire_creation_date),
-                    "id_platform_login_author_name_list": set([login_author_name]),
-                    "id_platform_login_name_list": set([user_login] if user_login else []),
+                    "uuid": get_uuid(repo, "platform", source["user_login"], source.get("author_name"), source.get("user_email"), grimoire_creation_date),
+                    "id_platform_login_name_list": set([source.get("user_login")] if source.get("user_login") else []),
                     "id_platform_author_name_list": set([source.get("author_name")] if source.get("author_name") else []),
                     "id_platform_author_email_list": set([source.get("user_email")] if source.get("user_email") else []),
                     "id_identity_list": id_identity_list,
@@ -339,12 +336,10 @@ class ContributorDevOrgRepo:
                 self.platform_item_id_dict[item["uuid"]] = item
                 for identity in item["id_identity_list"]:
                     self.platform_item_identity_dict[identity] = item["uuid"]
-        logger.info(f"{repo} {index}  {type} finish count:{str(count)} {str(datetime.now() - start_time)}")
-        # logger.info(repo + " " + index + " finish count:" + str(count) + " " + str(datetime.now() - start_time))
+        logger.info(repo + " " + index + " finish count:" + str(count) + " " + str(datetime.now() - start_time))
 
     def processing_commit_data(self, index, repo, from_date, to_date):
         logger.info(repo + " " + index + " processing...")
-        created_at = self.get_repo_created(repo)
         search_after = []
         count = 0
         start_time = datetime.now()
@@ -353,15 +348,8 @@ class ContributorDevOrgRepo:
             count = count + len(results)
             if len(results) == 0:
                 break
-            search_after = results[len(results) - 1]["sort"]
-            hash_list = [result["_source"]["hash"] for result in results]
-            pr_hits = self.get_pr_list_by_commit_hash(repo, hash_list)
-            pr_data_dict = {}
-            for pr_hit in pr_hits:
-                pr_data_dict[pr_hit["_source"]["merge_commit_sha"]] = pr_hit["_source"]
-                for pr_commit_hash in pr_hit["_source"]["commits_data"]:
-                    pr_data_dict[pr_commit_hash] = pr_hit["_source"]
             for result in results:
+                search_after = result["sort"]
                 source = result["_source"]
                 if source.get("author_name") is None:
                     continue
@@ -369,7 +357,7 @@ class ContributorDevOrgRepo:
                     str_to_datetime(source["grimoire_creation_date"]).replace(tzinfo=None) + timedelta(microseconds=int(source["uuid"], 16) % 100000)).isoformat()
                 id_identity_list = [
                     source.get("author_name"),
-                    source.get("author_email", None)
+                    get_email_prefix_domain(source.get("author_email"))[0] if source.get("author_email") else None
                 ]
                 id_identity_list = set(
                     [exclude_special_str(x.lower()) for x in id_identity_list if str_is_not_empty(x) and x.lower() not in exclude_field_list and str_is_not_empty(exclude_special_str(x)) ])
@@ -385,11 +373,6 @@ class ContributorDevOrgRepo:
                             "last_date": grimoire_creation_date
                         }
                         org_change_date_list.append(org_date)
-                code_direct_commit_date = None
-                if grimoire_creation_date >= created_at and source["hash"] not in pr_data_dict \
-                        and ((source["committer_name"] in "GitHub" and source["committer_email"] in "noreply@github.com")
-                             or (source["committer_name"] == source["author_name"] and source["committer_email"] == source["author_email"])):
-                    code_direct_commit_date = grimoire_creation_date
 
                 item = {
                     "uuid": get_uuid(repo, "git", source["author_name"], source.get("author_email"), grimoire_creation_date),
@@ -397,7 +380,6 @@ class ContributorDevOrgRepo:
                     "id_git_author_email_list": set([source.get("author_email")] if source.get("author_email") else []),
                     "id_identity_list": id_identity_list,
                     "code_commit_date_list": {grimoire_creation_date},
-                    "code_direct_commit_date_list": {code_direct_commit_date} if code_direct_commit_date else set(),
                     "last_contributor_date": grimoire_creation_date,
                     "org_change_date_list": org_change_date_list
                 }
@@ -439,154 +421,13 @@ class ContributorDevOrgRepo:
                 result_data_list.append(old_data)
         return result_data_list
 
-    def get_merge_platform_git_contributor_data_backup20230723(self, repo, git_data_dict, platform_data_dict):
-        search_after = []
-        login_author_name_dict = {}
-        new_git_data_dict = git_data_dict.copy()
-        new_platform_data_dict = {}
-        while True:
-            # 1: 获取全部PR , 并提取commit hash list
-            pr_list = self.get_pr_enrich_data(self.pr_index, repo, self.from_date, self.end_date, page_size, search_after)
-            if len(pr_list) == 0:
-                break
-            search_after = pr_list[len(pr_list) - 1]["sort"]
-            commit_hash_list = [commit_hash for pr in pr_list for commit_hash in pr["_source"]["commits_data"]]
-            # 2: 根据commit hash list获取对应 commit数据
-            git_commit_list = self.get_git_list_by_hash_list(repo, commit_hash_list)
-            git_commit_dict = {git_message["_source"]["hash"]: git_message for git_message in git_commit_list}
-            # 3: 提取 merge commit hash list ,再获取对应 commit 数据, 最终得到 commit list
-            git_squash_rebase_hash_list = [pr["_source"]["merge_commit_sha"] for pr in pr_list if pr["_source"]["commits_data"][0] not in git_commit_dict]
-            git_merge_hash_list = [pr["_source"]["merge_commit_sha"] for pr in pr_list if pr["_source"]["commits_data"][0] in git_commit_dict]
-            git_squash_rebase_commit_dict = {}
-            git_merge_commit_dict = {}
-            if len(git_merge_hash_list) > 0:
-                git_squash_rebase_commit_list = self.get_git_list_by_hash_list(repo, git_squash_rebase_hash_list)
-                git_squash_rebase_commit_dict = {git_message["_source"]["hash"]: git_message for git_message in git_squash_rebase_commit_list}
-            if len(git_merge_hash_list) > 0:
-                git_merge_commit_list = self.get_git_list_by_hash_list(repo, git_merge_hash_list)
-                git_merge_commit_dict = {git_message["_source"]["hash"]: git_message for git_message in git_merge_commit_list}
-            # 4: 遍历 PR , 得到login 和 author 对应关系 login_author_mapping
-            for pr in pr_list:
-                pr_data = pr["_source"]
-                merge_login = pr_data["merge_author_login"]
-                create_login = pr_data["user_login"]
-                if pr_data["commits_data"][0] in git_commit_dict:
-                    git_message = git_commit_dict[pr_data["commits_data"][0]]
-                    commit_author_name = git_message["_source"]["author_name"]
-                    login_author_name_dict[merge_login] = login_author_name_dict.get(merge_login, set()).add(commit_author_name)
-                if pr_data["merge_commit_sha"] in git_squash_rebase_commit_dict:
-                    git_message = git_squash_rebase_commit_dict[pr_data["merge_commit_sha"]]
-                    squash_rebase_commit_author_name = git_message["_source"]["author_name"]
-                    login_author_name_dict[merge_login] = login_author_name_dict.get(merge_login, set()).add(
-                        squash_rebase_commit_author_name)
-                if pr_data["merge_commit_sha"] in git_merge_commit_dict:
-                    git_message = git_merge_commit_dict[pr_data["merge_commit_sha"]]
-                    merge_commit_author_name = git_message["_source"]["author_name"]
-                    login_author_name_dict[create_login] = login_author_name_dict.get(create_login, set()).add(
-                        merge_commit_author_name)
-        # 5: 将 git_data_dict 转成 git_author_uuid_dict
-        git_author_uuid_dict = {author_name: git_data["uuid"] for git_data in git_data_dict.values()
-                                for author_name in git_data["id_git_author_name_list"]}
-        # 6: 遍历 platform_data_dict , 匹配login_author_mapping 对应 git_author_uuid_dict
-        for platform_data in platform_data_dict:
-            for platform_login_name in platform_data["id_platform_login_name_list"]:
-                if platform_login_name in login_author_name_dict:
-                    for author_name in login_author_name_dict[platform_login_name]:
-                        git_data = new_git_data_dict.pop(git_author_uuid_dict[author_name], None)
-                        if git_data:
-                            platform_data = self.get_merge_contributor_data(platform_data, git_data)
-            new_platform_data_dict[platform_data["uuid"]] = platform_data
-
-        result_item_dict, merge_id_set = self.get_merge_old_new_contributor_data(new_git_data_dict, new_platform_data_dict)
-        for commit_data in new_git_data_dict.values():
+    def get_merge_platform_git_contributor_data(self, git_data_dict, platform_data_dict):
+        result_item_dict, merge_id_set = self.get_merge_old_new_contributor_data(git_data_dict, platform_data_dict)
+        for commit_data in git_data_dict.values():
             if commit_data["uuid"] in merge_id_set:
                 continue
             result_item_dict[commit_data["uuid"]] = commit_data
         return result_item_dict
-
-    def get_merge_platform_git_contributor_data(self, repo, git_data_dict, platform_data_dict):
-        new_git_data_dict = git_data_dict.copy()
-        new_platform_data_dict = {}
-        login_author_name_dict = self.get_platform_login_git_author_dict(repo)
-
-        git_author_uuid_dict = {author_name: git_data["uuid"] for git_data in git_data_dict.values()
-                                for author_name in git_data["id_git_author_name_list"]}
-        for platform_data in platform_data_dict.values():
-            for platform_login_name in platform_data["id_platform_login_name_list"]:
-                if platform_login_name in login_author_name_dict:
-                    for author_name in login_author_name_dict[platform_login_name]:
-                        if git_author_uuid_dict.get(author_name):
-                            git_data = new_git_data_dict.pop(git_author_uuid_dict[author_name], None)
-                            if git_data:
-                                platform_data = self.get_merge_contributor_data(platform_data, git_data)
-            new_platform_data_dict[platform_data["uuid"]] = platform_data
-
-        result_item_dict, merge_id_set = self.get_merge_old_new_contributor_data(new_git_data_dict, new_platform_data_dict)
-        for commit_data in new_git_data_dict.values():
-            if commit_data["uuid"] in merge_id_set:
-                continue
-            result_item_dict[commit_data["uuid"]] = commit_data
-        return result_item_dict
-
-    def get_platform_login_git_author_dict(self, repo):
-        created_at = self.get_repo_created(repo)
-        search_after = []
-        login_author_name_dict = {}
-        while True:
-            query_dsl = self.get_enrich_dsl("tag", repo + ".git", self.from_date, self.end_date, page_size, search_after)
-            query_dsl["query"]["bool"]["filter"].append({"range": {"grimoire_creation_date": {"gte": created_at}}})
-            results = self.client.search(index=self.git_index, body=query_dsl)["hits"]["hits"]
-            if len(results) == 0:
-                break
-            search_after = results[len(results) - 1]["sort"]
-            hash_list = [result["_source"]["hash"] for result in results]
-            hash_set = set(hash_list)
-            pr_hits = self.get_pr_list_by_commit_hash(repo, hash_list)
-            pr_data_dict = {}
-            for pr_hit in pr_hits:
-                pr_data_dict[pr_hit["_source"]["merge_commit_sha"]] = pr_hit["_source"]
-                for pr_commit_hash in pr_hit["_source"]["commits_data"]:
-                    pr_data_dict[pr_commit_hash] = pr_hit["_source"]
-            for hit in results:
-                data = hit["_source"]
-                commit_author_name = data["author_name"]
-                commit_committer_name = data["committer_name"]
-                if data["hash"] in pr_data_dict:
-                    pr_data = pr_data_dict[data["hash"]]
-                    merge_login = pr_data["merge_author_login"]
-                    create_login = pr_data["user_login"]
-                    if len(set(pr_data["commits_data"]) & hash_set) > 0 or len(data["parents"]) > 1:
-                        # merge
-                        if pr_data["merge_commit_sha"] is not None and data["hash"] in pr_data["merge_commit_sha"] and data["committer_name"] in "GitHub" and data["committer_email"] in "noreply@github.com":
-                            author_set = login_author_name_dict.get(merge_login, set())
-                            author_set.add(commit_author_name)
-                            login_author_name_dict[merge_login] = author_set
-                        elif data["hash"] in pr_data["commits_data"] and commit_author_name == commit_committer_name:
-                            author_set = login_author_name_dict.get(create_login, set())
-                            author_set.add(commit_author_name)
-                            login_author_name_dict[create_login] = author_set
-                    else:
-                        if data["committer_name"] in "GitHub" and data["committer_email"] in "noreply@github.com":
-                            # squash
-                            author_set = login_author_name_dict.get(create_login, set())
-                            author_set.add(commit_author_name)
-                            login_author_name_dict[create_login] = author_set
-                        else:
-                            # rebase
-                            author_set = login_author_name_dict.get(create_login, set())
-                            author_set.add(commit_author_name)
-                            login_author_name_dict[create_login] = author_set
-
-                            committer_set = login_author_name_dict.get(merge_login, set())
-                            committer_set.add(commit_committer_name)
-                            login_author_name_dict[merge_login] = committer_set
-        return login_author_name_dict
-
-    def get_git_list_by_hash_list(self, repo, hash_list):
-        git_query_dsl = self.get_enrich_dsl("tag", repo + ".git", "1970-01-01", "2099-01-01", page_size, [])
-        git_query_dsl["query"]["bool"]["must"].append({"terms": {"hash": hash_list}})
-        git_list = self.client.search(index=self.git_index, body=git_query_dsl)["hits"]["hits"]
-        return git_list
 
     def get_merge_old_new_contributor_data(self, old_data_dict, new_data_dict):
         result_item_dict = {}
@@ -613,57 +454,58 @@ class ContributorDevOrgRepo:
                             break
                 else:
                     merge_id_set.add(old_data["uuid"])
-                item = self.get_merge_contributor_data(item, old_data)
+
+                id_platform_login_name_list = item.get("id_platform_login_name_list", set())
+                id_platform_author_name_list = item.get("id_platform_author_name_list", set())
+                id_platform_author_email_list = item.get("id_platform_author_email_list", set())
+                id_git_author_name_list = item.get("id_git_author_name_list", set())
+                id_git_author_email_list = item.get("id_git_author_email_list", set())
+                identity_list = item.get("id_identity_list", set())
+                issue_creation_date_list = item.get("issue_creation_date_list", set())
+                pr_creation_date_list = item.get("pr_creation_date_list", set())
+                issue_comments_date_list = item.get("issue_comments_date_list", set())
+                pr_review_date_list = item.get("pr_review_date_list", set())
+                code_commit_date_list = item.get("code_commit_date_list", set())
+                fork_date_list = item.get("fork_date_list", set())
+                star_date_list = item.get("star_date_list", set())
+                org_change_date_list = item.get("org_change_date_list", [])
+
+                id_platform_login_name_list.update(set(old_data["id_platform_login_name_list"] if old_data.get("id_platform_login_name_list") else []))
+                id_platform_author_name_list.update(set(old_data["id_platform_author_name_list"] if old_data.get("id_platform_author_name_list") else []))
+                id_platform_author_email_list.update(set(old_data["id_platform_author_email_list"] if old_data.get("id_platform_author_email_list") else []))
+                id_git_author_name_list.update(set(old_data["id_git_author_name_list"] if old_data.get("id_git_author_name_list") else []))
+                id_git_author_email_list.update(set(old_data["id_git_author_email_list"] if old_data.get("id_git_author_email_list") else []))
+                identity_list.update(set(old_data["id_identity_list"] if old_data.get("id_identity_list") else []))
+                issue_creation_date_list.update(set(old_data["issue_creation_date_list"] if old_data.get("issue_creation_date_list") else []))
+                pr_creation_date_list.update(set(old_data["pr_creation_date_list"] if old_data.get("pr_creation_date_list") else []))
+                issue_comments_date_list.update(set(old_data["issue_comments_date_list"] if old_data.get("issue_comments_date_list") else []))
+                pr_review_date_list.update(set(old_data["pr_review_date_list"] if old_data.get("pr_review_date_list") else []))
+                code_commit_date_list.update(set(old_data["code_commit_date_list"] if old_data.get("code_commit_date_list") else []))
+                fork_date_list.update(set(old_data["fork_date_list"] if old_data.get("fork_date_list") else []))
+                star_date_list.update(set(old_data["star_date_list"] if old_data.get("star_date_list") else []))
+                if old_data.get("org_change_date_list") is not None:
+                    org_change_date_list = self.get_merge_org_change_date(old_data.get("org_change_date_list"), org_change_date_list)
+
+                item["id_platform_login_name_list"] = id_platform_login_name_list
+                item["id_platform_author_name_list"] = id_platform_author_name_list
+                item["id_platform_author_email_list"] = id_platform_author_email_list
+                item["id_git_author_name_list"] = id_git_author_name_list
+                item["id_git_author_email_list"] = id_git_author_email_list
+                item["id_identity_list"] = identity_list
+                item["issue_creation_date_list"] = issue_creation_date_list
+                item["pr_creation_date_list"] = pr_creation_date_list
+                item["issue_comments_date_list"] = issue_comments_date_list
+                item["pr_review_date_list"] = pr_review_date_list
+                item["code_commit_date_list"] = code_commit_date_list
+                item["fork_date_list"] = fork_date_list
+                item["star_date_list"] = star_date_list
+                item["last_contributor_date"] = get_latest_date(item["last_contributor_date"], old_data["last_contributor_date"])
+                item["org_change_date_list"] = org_change_date_list
+
             result_item_dict[item["uuid"]] = item
             for identity_list in item["id_identity_list"]:
                 result_identity_uuid_dict[identity_list] = item["uuid"]
         return result_item_dict, merge_id_set
-
-    def get_merge_contributor_data(self, contributor1, contributor2):
-        id_platform_login_name_list = contributor1.get("id_platform_login_name_list", set())
-        id_platform_login_author_name_list = contributor1.get("id_platform_login_author_name_list", set())
-        id_platform_author_name_list = contributor1.get("id_platform_author_name_list", set())
-        id_platform_author_email_list = contributor1.get("id_platform_author_email_list", set())
-        id_git_author_name_list = contributor1.get("id_git_author_name_list", set())
-        id_git_author_email_list = contributor1.get("id_git_author_email_list", set())
-        identity_list = contributor1.get("id_identity_list", set())
-        org_change_date_list = contributor1.get("org_change_date_list", [])
-
-
-        id_platform_login_name_list.update(
-            set(contributor2["id_platform_login_name_list"] if contributor2.get("id_platform_login_name_list") else []))
-        id_platform_login_author_name_list.update(
-            set(contributor2["id_platform_login_author_name_list"] if contributor2.get("id_platform_login_author_name_list") else []))
-        id_platform_author_name_list.update(
-            set(contributor2["id_platform_author_name_list"] if contributor2.get("id_platform_author_name_list") else []))
-        id_platform_author_email_list.update(
-            set(contributor2["id_platform_author_email_list"] if contributor2.get("id_platform_author_email_list") else []))
-        id_git_author_name_list.update(
-            set(contributor2["id_git_author_name_list"] if contributor2.get("id_git_author_name_list") else []))
-        id_git_author_email_list.update(
-            set(contributor2["id_git_author_email_list"] if contributor2.get("id_git_author_email_list") else []))
-        identity_list.update(set(contributor2["id_identity_list"] if contributor2.get("id_identity_list") else []))
-        if contributor2.get("org_change_date_list") is not None:
-            org_change_date_list = self.get_merge_org_change_date(contributor2.get("org_change_date_list"),
-                                                                  org_change_date_list)
-
-        contributor1["id_platform_login_name_list"] = id_platform_login_name_list
-        contributor1["id_platform_login_author_name_list"] = id_platform_login_author_name_list
-        contributor1["id_platform_author_name_list"] = id_platform_author_name_list
-        contributor1["id_platform_author_email_list"] = id_platform_author_email_list
-        contributor1["id_git_author_name_list"] = id_git_author_name_list
-        contributor1["id_git_author_email_list"] = id_git_author_email_list
-        contributor1["id_identity_list"] = identity_list
-
-        for data_field in self.date_field_list:
-            contribution_data_list = contributor1.get(data_field, set())
-            contribution_data_list.update(
-                set(contributor2[data_field] if contributor2.get(data_field) else []))
-            contributor1[data_field] = contribution_data_list
-        contributor1["last_contributor_date"] = get_latest_date(contributor1["last_contributor_date"],
-                                                        contributor2["last_contributor_date"])
-        contributor1["org_change_date_list"] = org_change_date_list
-        return contributor1
 
     def get_enrich_dsl(self, repo_field, repo, from_date, to_date, page_size=100, search_after=[]):
         query = {
@@ -731,50 +573,53 @@ class ContributorDevOrgRepo:
         results = self.client.search(index=index, body=query_dsl)["hits"]["hits"]
         return results
 
-    def get_observe_enrich_data(self, index, repo, from_date, to_date, page_size=100, search_after=[]):
+    def get_fork_enrich_data(self, index, repo, from_date, to_date, page_size=100, search_after=[]):
         query_dsl = self.get_enrich_dsl("tag", repo, from_date, to_date, page_size, search_after)
+        query_dsl["query"]["bool"]["must"].append({"match_phrase": {"type": "fork"}})
         results = self.client.search(index=index, body=query_dsl)["hits"]["hits"]
         return results
 
-    def get_issue_event_enrich_data(self, index, repo, from_date, to_date, page_size=100, search_after=[], type="LabeledEvent"):
+    def get_star_enrich_data(self, index, repo, from_date, to_date, page_size=100, search_after=[]):
         query_dsl = self.get_enrich_dsl("tag", repo, from_date, to_date, page_size, search_after)
-        query_dsl["query"]["bool"]["must"].append({"match_phrase": {"pull_request": "false"}})
-        query_dsl["query"]["bool"]["must"].append({"match_phrase": {"event_type": type}})
-        if type in ["ClosedEvent", "ReopenedEvent"]:
-            query_dsl["query"]["bool"]["must"].append({
-                "script": {
-                    "script": "doc['actor_username'].size() > 0 && doc['reporter_user_name'].size() > 0 &&  doc['actor_username'].value != doc['reporter_user_name'].value"
-                }
-            })
+        query_dsl["query"]["bool"]["must"].append({"match_phrase": {"type": "star"}})
         results = self.client.search(index=index, body=query_dsl)["hits"]["hits"]
         return results
-
-    def get_pr_event_enrich_data(self, index, repo, from_date, to_date, page_size=100, search_after=[], type="LabeledEvent"):
+    
+    def get_watch_enrich_data(self, index, repo, from_date, to_date, page_size=100, search_after=[]):
         query_dsl = self.get_enrich_dsl("tag", repo, from_date, to_date, page_size, search_after)
-        query_dsl["query"]["bool"]["must"].append({"match_phrase": {"pull_request": "true"}})
-        query_dsl["query"]["bool"]["must"].append({"match_phrase": {"event_type": type}})
-        if type in ["ClosedEvent", "ReopenedEvent"]:
-            query_dsl["query"]["bool"]["must"].append({
-                "script": {
-                    "script": "doc['actor_username'].size() > 0 && doc['reporter_user_name'].size() > 0 &&  doc['actor_username'].value != doc['reporter_user_name'].value"
-                }
-            })
-        if type in "PullRequestReview":
-            query_dsl["query"]["bool"]["must"].append({
-                "terms": {
-                    "merge_state": [
-                        "APPROVED",
-                        "CHANGES_REQUESTED",
-                        "DISMISSED"
-                    ]
-                }
-            })
+        query_dsl["query"]["bool"]["must"].append({"match_phrase": {"type": "watch"}})
         results = self.client.search(index=index, body=query_dsl)["hits"]["hits"]
         return results
-
 
     def get_commit_enrich_data(self, index, repo, from_date, to_date, page_size=100, search_after=[]):
         query_dsl = self.get_enrich_dsl("tag", repo + ".git", from_date, to_date, page_size, search_after)
+        results = self.client.search(index=index, body=query_dsl)["hits"]["hits"]
+        return results
+
+    def get_local_push_commit_enrich_data(self, index, repo, from_date, to_date, repo_created_at, page_size=100, search_after=[]):
+        query_dsl = self.get_enrich_dsl("tag", repo + ".git", from_date, to_date, page_size, search_after)
+        query_dsl["query"]["bool"]["must"].append({
+                        "script": {
+                            "script": '''
+                                doc['committer_email'].size() > 0 
+                                && doc['author_email'].size() > 0 
+                                && doc['committer_name'].size() > 0 
+                                && doc['author_name'].size() > 0 
+                                && doc['committer_email'] == doc['author_email'] 
+                                && doc['committer_name'] == doc['author_name']
+                            '''
+                        }
+                    })
+        query_dsl["query"]["bool"]["filter"].append({"range": {"grimoire_creation_date": {"gte": repo_created_at}}})
+        results = self.client.search(index=index, body=query_dsl)["hits"]["hits"]
+        return results
+
+    def get_web_push_commit_enrich_data(self, index, repo, from_date, to_date, repo_created_at, page_size=100, search_after=[]):
+        query_dsl = self.get_enrich_dsl("tag", repo + ".git", from_date, to_date, page_size, search_after)
+        query_dsl["query"]["bool"]["must"].append({"match_phrase": {"committer_name": "GitHub"}})
+        query_dsl["query"]["bool"]["must"].append({"match_phrase": {"committer_email": "noreply@github.com"}})
+        query_dsl["query"]["bool"]["must"].append({"script": {"script": "doc['parents'].size() == 1"}})
+        query_dsl["query"]["bool"]["filter"].append({"range": {"grimoire_creation_date": {"gte": repo_created_at}}})
         results = self.client.search(index=index, body=query_dsl)["hits"]["hits"]
         return results
 
@@ -993,6 +838,7 @@ class ContributorDevOrgRepo:
                 result_list = result_list + [contributor["_source"] for contributor in contributors_list]
         return dict(zip([item["uuid"] for item in result_list], result_list))
 
+
     def get_org_name_by_email(self, email):
         domain = get_email_prefix_domain(email)[1]
         if domain is None:
@@ -1003,7 +849,7 @@ class ContributorDevOrgRepo:
         if ("noreply.gitee.com" in domain or "noreply.github.com" in domain) and self.company is not None:
             org_name = self.company
         return org_name
-
+    
     def is_bot_by_author_name(self, repo, author_name_list):
         for author_name in author_name_list:
             common_list = self.bots_dict["common"]
@@ -1026,9 +872,11 @@ class ContributorDevOrgRepo:
 
     def get_repo_leader_list(self, repo):
         leader_list_by_event = self.get_repo_leader_list_by_event(repo)
-        leader_list_by_by_direct_push = self.get_repo_leader_list_by_direct_push(repo)
-        return leader_list_by_event | leader_list_by_by_direct_push
+        leader_list_by_by_local_direct_push = self.get_repo_leader_list_by_local_direct_push(repo)
+        leader_list_by_by_web_direct_push = self.get_repo_leader_list_by_web_direct_push(repo)
+        return leader_list_by_event | leader_list_by_by_local_direct_push | leader_list_by_by_web_direct_push
 
+    
     def get_repo_leader_list_by_event(self, repo):
         query = {
             "size": 0,
@@ -1056,11 +904,14 @@ class ContributorDevOrgRepo:
                                     "LabeledEvent",
                                     "UnlabeledEvent",
                                     "MergedEvent",
+                                    "PullRequestReview",
                                     "AssignedEvent",
                                     "LockedEvent",
                                     "MilestonedEvent",
                                     "MarkedAsDuplicateEvent",
-                                    "TransferredEvent"
+                                    "TransferredEvent",
+                                    "BaseRefForcePushedEvent",
+                                    "HeadRefForcePushedEvent"
                                 ]
                             }
                         },
@@ -1082,26 +933,6 @@ class ContributorDevOrgRepo:
                                     }
                                 ]
                             }
-                        },
-                        {
-                            "bool": {
-                                "must": [
-                                    {
-                                      "match_phrase": {
-                                        "event_type": "PullRequestReview"
-                                      }
-                                    },
-                                    {
-                                        "terms": {
-                                            "merge_state": [
-                                              "APPROVED",
-                                              "CHANGES_REQUESTED",
-                                              "DISMISSED"
-                                            ]
-                                        }
-                                    }
-                                ]
-                            }
                         }
                     ],
                     "minimum_should_match": 1
@@ -1112,30 +943,92 @@ class ContributorDevOrgRepo:
         leader_list = {bucket["key"] for bucket in buckets}
         return leader_list
 
-    def get_repo_leader_list_by_direct_push(self, repo):
+    def get_repo_leader_list_by_local_direct_push(self, repo):
         created_at = self.get_repo_created(repo)
         search_after = []
         leader_list = set()
         while True:
-            query_dsl = self.get_enrich_dsl("tag", repo + ".git", self.from_date, self.end_date, page_size, search_after)
-            query_dsl["query"]["bool"]["filter"].append({"range": {"grimoire_creation_date": {"gte": created_at}}})
-            results = self.client.search(index=self.git_index, body=query_dsl)["hits"]["hits"]
+            results = self.get_local_push_commit_enrich_data(self.git_index, repo, self.from_date, self.end_date,
+                                                             created_at, page_size, search_after)
+            if len(results) == 0:
+                break
+            search_after = results[len(results)-1]["sort"]
+            hash_list = [result["_source"]["hash"] for result in results]
+            pr_query = {
+                "size": 0,
+                "aggs": {
+                    "commit_list": {
+                        "terms": {
+                            "field": "commits_data",
+                            "size": page_size
+                        }
+                    }
+                },
+                "query": {
+                    "bool": {
+                        "must": [
+                            {
+                                "match_phrase": {
+                                    "origin": repo
+                                }
+                            },
+                            {
+                                "terms": {
+                                    "commits_data": hash_list
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+            buckets = self.client.search(index=self.pr_index, body=pr_query)["aggregations"]["commit_list"]["buckets"]
+            commit_set = {bucket["key"] for bucket in buckets}
+            author_name_list = {result["_source"]["author_name"] for result in results if result["_source"]["hash"] not in commit_set}
+            leader_list.update(author_name_list)
+        return leader_list
+
+    def get_repo_leader_list_by_web_direct_push(self, repo):
+        created_at = self.get_repo_created(repo)
+        search_after = []
+        leader_list = set()
+        while True:
+            results = self.get_web_push_commit_enrich_data(self.git_index, repo, self.from_date, self.end_date,
+                                                             created_at, page_size, search_after)
             if len(results) == 0:
                 break
             search_after = results[len(results) - 1]["sort"]
             hash_list = [result["_source"]["hash"] for result in results]
-            pr_hits = self.get_pr_list_by_commit_hash(repo, hash_list)
-            pr_data_dict = {}
-            for pr_hit in pr_hits:
-                pr_data_dict[pr_hit["_source"]["merge_commit_sha"]] = pr_hit["_source"]
-                for pr_commit_hash in pr_hit["_source"]["commits_data"]:
-                    pr_data_dict[pr_commit_hash] = pr_hit["_source"]
-            for result in results:
-                data = result["_source"]
-                if data["hash"] not in pr_data_dict \
-                        and ((data["committer_name"] in "GitHub" and data["committer_email"] in "noreply@github.com")
-                             or (data["committer_name"] == data["author_name"] and data["committer_email"] == data["author_email"])):
-                    leader_list.add(data["author_name"])
+            pr_query = {
+                "size": 0,
+                "aggs": {
+                    "commit_list": {
+                        "terms": {
+                            "field": "merge_commit_sha",
+                            "size": page_size
+                        }
+                    }
+                },
+                "query": {
+                    "bool": {
+                        "must": [
+                            {
+                                "match_phrase": {
+                                    "origin": repo
+                                }
+                            },
+                            {
+                                "terms": {
+                                    "merge_commit_sha": hash_list
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+            buckets = self.client.search(index=self.pr_index, body=pr_query)["aggregations"]["commit_list"]["buckets"]
+            commit_set = {bucket["key"] for bucket in buckets}
+            author_name_list = {result["_source"]["author_name"] for result in results if result["_source"]["hash"] not in commit_set}
+            leader_list.update(author_name_list)
         return leader_list
 
     def get_repo_created(self, repo):
@@ -1164,40 +1057,3 @@ class ContributorDevOrgRepo:
         created_at = hits[0]["_source"]["created_at"]
         return created_at.replace("Z", "")
 
-    def get_pr_list_by_commit_hash(self, repo, hash_list):
-        pr_query = {
-            "size": 10000,
-            "query": {
-                "bool": {
-                    "must": [
-                        {
-                            "match_phrase": {
-                                "origin": repo
-                            }
-                        },
-                        {
-                            "match_phrase": {
-                                "merged": "true"
-                            }
-                        }
-                    ],
-                    "should": [
-                        {
-                            "terms": {
-                                "merge_commit_sha": hash_list
-                            }
-                        },
-                        {
-                            "terms": {
-                                "commits_data": hash_list
-                            }
-                        }
-                    ],
-                    "minimum_should_match": 1
-                }
-            }
-        }
-        pr_hits = self.client.search(index=self.pr_index, body=pr_query)[
-            "hits"]["hits"]
-        return pr_hits
-        

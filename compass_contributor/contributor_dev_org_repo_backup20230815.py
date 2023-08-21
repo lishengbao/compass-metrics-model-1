@@ -117,13 +117,14 @@ def get_latest_date(date1, date2):
 class ContributorDevOrgRepo:
     def __init__(self, json_file, identities_config_file, organizations_config_file, bots_config_file, issue_index,
                  pr_index, issue_comments_index, pr_comments_index, git_index, contributors_index, from_date, end_date,
-                 repo_index, company=None, event_index=None, stargazer_index=None, fork_index=None):
+                 repo_index, observe_index=None, company=None, event_index=None):
         self.issue_index = issue_index
         self.pr_index = pr_index
         self.issue_comments_index = issue_comments_index
         self.pr_comments_index = pr_comments_index
         self.git_index = git_index
         self.repo_index = repo_index
+        self.observe_index = observe_index
         self.contributors_index = contributors_index
         self.from_date = from_date
         self.end_date = end_date
@@ -132,8 +133,6 @@ class ContributorDevOrgRepo:
         self.bots_dict = get_bots_info(bots_config_file)
         self.company = None if company or company == 'None' else company
         self.event_index = event_index
-        self.stargazer_index = stargazer_index
-        self.fork_index = fork_index
         self.client = None
         self.all_repo = get_all_repo(json_file, 'gitee' if 'gitee' in issue_index else 'github')
         self.platform_item_id_dict = {}
@@ -167,9 +166,9 @@ class ContributorDevOrgRepo:
             "pr": {"index": self.pr_index, "date_field": "pr_creation_date_list"},
             "issue_comments": {"index": self.issue_comments_index, "date_field": "issue_comments_date_list"},
             "pr_comments": {"index": self.pr_comments_index, "date_field": "pr_comments_date_list"},
-            "fork": {"index": self.fork_index, "date_field": "fork_date_list"},
-            "star": {"index": self.stargazer_index, "date_field": "star_date_list"},
-            # "watch": {"index": self.observe_index, "date_field": "watch_date_list"},
+            "fork": {"index": self.observe_index, "date_field": "fork_date_list"},
+            "star": {"index": self.observe_index, "date_field": "star_date_list"},
+            "watch": {"index": self.observe_index, "date_field": "watch_date_list"},
             "issue_ClosedEvent": {"index": self.event_index, "date_field": "issue_close_date_list"},
             "issue_ReopenedEvent": {"index": self.event_index, "date_field": "issue_reopen_date_list"},
             "issue_AssignedEvent": {"index": self.event_index, "date_field": "issue_assign_date_list"},
@@ -185,17 +184,17 @@ class ContributorDevOrgRepo:
             "pr_MergedEvent": {"index": self.event_index, "date_field": "pr_merge_date_list"},
             "pr_PullRequestReview": {"index": self.event_index, "date_field": "pr_review_date_list"},
         }
+        for index_key, index_values in platform_index_type_dict.items():
+            self.date_field_list.append(index_values["date_field"])
+            self.processing_platform_data(index_values["index"], repo, self.from_date, self.end_date, index_values["date_field"], type=index_key)
         if self.git_index is not None:
             self.date_field_list.append("code_commit_date_list")
             self.date_field_list.append("code_direct_commit_date_list")
             self.processing_commit_data(self.git_index, repo, self.from_date, self.end_date)
-        for index_key, index_values in platform_index_type_dict.items():
-            self.date_field_list.append(index_values["date_field"])
-            self.processing_platform_data(index_values["index"], repo, self.from_date, self.end_date, index_values["date_field"], type=index_key)
-        
         if len(self.platform_item_id_dict) == 0 and len(self.git_item_id_dict) == 0:
             logger.info(repo + " finish count:" + str(0) + " " + str(datetime.now() - start_time))
             return
+
         all_items_dict = self.get_merge_platform_git_contributor_data(repo, self.git_item_id_dict, self.platform_item_id_dict)
         # old_items_dict = self.query_contributors_org_dict(self.contributors_index, repo)
         # all_items_dict, merge_item_id_set = self.get_merge_old_new_contributor_data(old_items_dict, new_items_dict)
@@ -273,7 +272,7 @@ class ContributorDevOrgRepo:
             elif type == "pr_comments":
                 results = self.get_pr_comment_enrich_data(index, repo, from_date, to_date, page_size, search_after)
             elif type in ["fork", "star", "watch"]:
-                results = self.get_observe_enrich_data(index, repo, from_date, to_date, page_size, search_after)
+                results = self.get_observe_enrich_data(index, repo, from_date, to_date, page_size, search_after, type)
             elif type in ["issue_LabeledEvent", "issue_ClosedEvent", "issue_ReopenedEvent", "issue_AssignedEvent",
                           "issue_MilestonedEvent", "issue_MarkedAsDuplicateEvent", "issue_TransferredEvent",
                           "issue_LockedEvent"]:
@@ -515,10 +514,9 @@ class ContributorDevOrgRepo:
             for platform_login_name in platform_data["id_platform_login_name_list"]:
                 if platform_login_name in login_author_name_dict:
                     for author_name in login_author_name_dict[platform_login_name]:
-                        if git_author_uuid_dict.get(author_name):
-                            git_data = new_git_data_dict.pop(git_author_uuid_dict[author_name], None)
-                            if git_data:
-                                platform_data = self.get_merge_contributor_data(platform_data, git_data)
+                        git_data = new_git_data_dict.pop(git_author_uuid_dict[author_name], None)
+                        if git_data:
+                            platform_data = self.get_merge_contributor_data(platform_data, git_data)
             new_platform_data_dict[platform_data["uuid"]] = platform_data
 
         result_item_dict, merge_id_set = self.get_merge_old_new_contributor_data(new_git_data_dict, new_platform_data_dict)
@@ -557,7 +555,7 @@ class ContributorDevOrgRepo:
                     create_login = pr_data["user_login"]
                     if len(set(pr_data["commits_data"]) & hash_set) > 0 or len(data["parents"]) > 1:
                         # merge
-                        if pr_data["merge_commit_sha"] is not None and data["hash"] in pr_data["merge_commit_sha"] and data["committer_name"] in "GitHub" and data["committer_email"] in "noreply@github.com":
+                        if data["hash"] in pr_data["merge_commit_sha"] and data["committer_name"] in "GitHub" and data["committer_email"] in "noreply@github.com":
                             author_set = login_author_name_dict.get(merge_login, set())
                             author_set.add(commit_author_name)
                             login_author_name_dict[merge_login] = author_set
@@ -731,8 +729,9 @@ class ContributorDevOrgRepo:
         results = self.client.search(index=index, body=query_dsl)["hits"]["hits"]
         return results
 
-    def get_observe_enrich_data(self, index, repo, from_date, to_date, page_size=100, search_after=[]):
+    def get_observe_enrich_data(self, index, repo, from_date, to_date, page_size=100, search_after=[], type="fork"):
         query_dsl = self.get_enrich_dsl("tag", repo, from_date, to_date, page_size, search_after)
+        query_dsl["query"]["bool"]["must"].append({"match_phrase": {"type": type}})
         results = self.client.search(index=index, body=query_dsl)["hits"]["hits"]
         return results
 

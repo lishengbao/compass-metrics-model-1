@@ -43,7 +43,6 @@ def requests_with_headers(url, headers):
             error text: {response.text},
             headers: {str(headers)}
         """)
-        return None
     return response
 
 
@@ -111,7 +110,7 @@ class ContributorObserve:
             }
             url = f'https://api.github.com/repos/{owner}/{repo}'
             res = requests_with_headers(url, headers)
-            if res:
+            if res.status_code == 200:
                 repo_text = json.loads(res.text)
                 return repo_text.get("watchers", None)
             return None
@@ -130,8 +129,8 @@ class ContributorObserve:
             while True:
                 res = requests_with_headers(url, headers)
                 time.sleep(1)
-                if res is None:
-                    continue
+                if res.status_code != 200:
+                    break
                 stars_text = json.loads(res.text)
                 fetch_star_count += len(stars_text)
                 for message in stars_text:
@@ -228,8 +227,8 @@ class ContributorObserve:
             url = f'https://api.github.com/repos/{owner}/{repo}/forks?per_page=100&page={page}'
             res = requests_with_headers(url, headers)
             time.sleep(1)
-            if res is None:
-                continue
+            if res.status_code != 200:
+                break
             page += 1
             forks_text = json.loads(res.text)
             if (len(forks_text)) == 0:
@@ -269,8 +268,8 @@ class ContributorObserve:
             url = f'https://gitee.com/api/v5/repos/{owner}/{repo}/stargazers?access_token={self.api_token}' \
                   f'&per_page=100&page={page}'
             res = requests_with_headers(url, headers)
-            if res is None:
-                continue
+            if res.status_code != 200:
+                break
             page += 1
             stars_text = json.loads(res.text)
             if (len(stars_text)) == 0:
@@ -311,8 +310,8 @@ class ContributorObserve:
             url = f'https://gitee.com/api/v5/repos/{owner}/{repo}/forks?access_token={self.api_token}' \
                   f'&per_page=100&page={page}'
             res = requests_with_headers(url, headers)
-            if res is None:
-                continue
+            if res.status_code != 200:
+                break
             page += 1
             forks_text = json.loads(res.text)
             if (len(forks_text)) == 0:
@@ -353,8 +352,8 @@ class ContributorObserve:
             url = f'https://gitee.com/api/v5/repos/{owner}/{repo}/subscribers?access_token={self.api_token}' \
                   f'&per_page=100&page={page}'
             res = requests_with_headers(url, headers)
-            if res is None:
-                continue
+            if res.status_code != 200:
+                break
             page += 1
             watchs_text = json.loads(res.text)
             if (len(watchs_text)) == 0:

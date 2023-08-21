@@ -27,6 +27,20 @@ def get_uuid(*args):
         args_list.append(arg)
     return uuid(*args_list)
 
+if __name__ == '__main__':
+    date = "2023-02-13T00:00:00+00:00"
+    community = "apache"
+    level = "repo"
+    label = "https://github.com/apache/kafka"
+    model_name = "Community Support and Service"
+    type = None
+    s = get_uuid(date, community, level, label, model_name, type)
+    base_uuid = [date, community, level, label, model_name, type]
+    s1 = get_uuid(*base_uuid)
+    print(s)
+    print(s1)
+
+
 def get_dict_hash(dictionary: Dict[str, Any]) -> str:
     """MD5 hash of a dictionary."""
     dhash = hashlib.md5()

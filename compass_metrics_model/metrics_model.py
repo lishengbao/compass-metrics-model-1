@@ -61,7 +61,7 @@ sys.path.append('../')
 
 logger = logging.getLogger(__name__)
 
-MAX_BULK_UPDATE_SIZE = 10
+MAX_BULK_UPDATE_SIZE = 0
 
 def newest_message(repo_url):
     query = {
@@ -698,28 +698,131 @@ class MetricsModel:
         results = self.es_in.search(index=index, body=query)["hits"]["hits"]
         return results
 
+    # def get_contributor_list(self, from_date, to_date, repos_list, date_field):
+    #     result_list = []
+    #     for repo in repos_list:
+    #         search_after = []
+    #         while True:
+    #             contributor_list = self.query_contributor_list(self.contributors_index, repo, date_field, from_date, to_date, 500, search_after)
+    #             if len(contributor_list) == 0:
+    #                 break
+    #             search_after = contributor_list[len(contributor_list) - 1]["sort"]
+    #             result_list = result_list +[contributor["_source"] for contributor in contributor_list]
+    #     return result_list
+
     def get_contributor_list(self, from_date, to_date, repos_list, date_field):
         result_list = []
         for repo in repos_list:
-            search_after = []
-            while True:
-                contributor_list = self.query_contributor_list(self.contributors_index, repo, date_field, from_date, to_date, 500, search_after)
-                if len(contributor_list) == 0:
-                    break
-                search_after = contributor_list[len(contributor_list) - 1]["sort"]
-                result_list = result_list +[contributor["_source"] for contributor in contributor_list]
+            scroll_id_list = set()
+            query = {
+                "query": {
+                    "bool": {
+                        "must": [
+                            {
+                                "match_phrase": {
+                                    "repo_name.keyword": repo
+                                }
+                            }
+                        ],
+                        "filter": [
+                            {
+                                "range": {
+                                    date_field: {
+                                        "gte": from_date.strftime("%Y-%m-%d"),
+                                        "lt": to_date.strftime("%Y-%m-%d")
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+            scorll_size = 500
+            taskList = self.es_in.search(index=self.contributors_index, body=query, scroll="1m", size=scorll_size)
+            scrollTotalSize = taskList["hits"]["total"]['value']
+            scroll_id = taskList["_scroll_id"]
+            for i in range(0, int(scrollTotalSize/scorll_size) + 1):
+                if i == 0:
+                    # Handle first patch answers
+                    taskHits = taskList["hits"]["hits"]
+                else:
+                    # print("scrolling with id: ", scroll_id)
+                    scrollRes = self.es_in.scroll(scroll_id=scroll_id, scroll='1m')
+                    # if scroll_id is None:
+                    #     source_client.clear_scroll(scroll_id=scroll_id)
+                    scroll_id = scrollRes["_scroll_id"]
+                    taskHits = scrollRes['hits']['hits']
+                scroll_id_list.add(scroll_id)
+                result_list = result_list +[contributor["_source"] for contributor in taskHits]
+            if len(scroll_id_list) > 0:
+                self.es_in.clear_scroll(scroll_id=','.join(scroll_id_list))
         return result_list
     
+    # def get_contributor_silence_list(self, from_date, to_date, repos_list, date_field, first_date_field):
+    #     result_list = []
+    #     for repo in repos_list:
+    #         search_after = []
+    #         while True:
+    #             contributor_list = self.query_contributor_silence_list(self.contributors_index, repo, date_field, first_date_field, from_date, to_date, 500, search_after)
+    #             if len(contributor_list) == 0:
+    #                 break
+    #             search_after = contributor_list[len(contributor_list) - 1]["sort"]
+    #             result_list = result_list +[contributor["_source"] for contributor in contributor_list]
+    #     return result_list
+
     def get_contributor_silence_list(self, from_date, to_date, repos_list, date_field, first_date_field):
         result_list = []
         for repo in repos_list:
-            search_after = []
-            while True:
-                contributor_list = self.query_contributor_silence_list(self.contributors_index, repo, date_field, first_date_field, from_date, to_date, 500, search_after)
-                if len(contributor_list) == 0:
-                    break
-                search_after = contributor_list[len(contributor_list) - 1]["sort"]
-                result_list = result_list +[contributor["_source"] for contributor in contributor_list]
+            scroll_id_list = set()
+            query = {
+                "query": {
+                    "bool": {
+                        "must": [
+                            {
+                                "match_phrase": {
+                                    "repo_name.keyword": repo
+                                }
+                            }
+                        ],
+                        "must_not": [
+                            {
+                                "range": {
+                                    date_field: {
+                                        "gte": from_date.strftime("%Y-%m-%d"),
+                                        "lt": to_date.strftime("%Y-%m-%d")
+                                    }
+                                }
+                            }
+                        ],
+                        "filter": [
+                            {
+                                "range": {
+                                    first_date_field: {
+                                        "lt": from_date.strftime("%Y-%m-%d")
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+            scorll_size = 500
+            taskList = self.es_in.search(index=self.contributors_index, body=query, scroll="1m", size=scorll_size)
+            scrollTotalSize = taskList["hits"]["total"]['value']
+            scroll_id = taskList["_scroll_id"]
+            for i in range(0, int(scrollTotalSize/scorll_size) + 1):
+                if i == 0:
+                    # Handle first patch answers
+                    taskHits = taskList["hits"]["hits"]
+                else:
+                    # print("scrolling with id: ", scroll_id)
+                    scrollRes = self.es_in.scroll(scroll_id=scroll_id, scroll='1m')
+                    scroll_id = scrollRes["_scroll_id"]
+                    taskHits = scrollRes['hits']['hits']
+                scroll_id_list.add(scroll_id)
+                result_list = result_list +[contributor["_source"] for contributor in taskHits]
+            if len(scroll_id_list) > 0:
+                self.es_in.clear_scroll(scroll_id=','.join(scroll_id_list))
         return result_list
 
     def contributor_count(self, contributor_list, is_bot=None):
@@ -776,8 +879,8 @@ class MetricsModel:
                 elif contributor.get("id_git_author_name_list") and len(
                         contributor.get("id_git_author_name_list")) > 0:
                     contributor_name = contributor["id_git_author_name_list"][0]
-                if contributor_name in ["vscodebot[bot]", "alexbarten", "kiranshila", "michaelvanstraten", "xiangpengzhao", "Alexendoo", "jnicklas" ,"Box-Of-Hats"]:
-                    continue
+                # if contributor_name in ["vscodebot[bot]", "alexbarten", "kiranshila", "michaelvanstraten", "xiangpengzhao", "Alexendoo", "jnicklas" ,"Box-Of-Hats"]:
+                #     continue
                 contribution_date = []
                 for date_field in date_field_list:
                     contribution_date.extend(contributor.get(date_field, []))
@@ -796,8 +899,7 @@ class MetricsModel:
 
         def get_activity_regular_set(from_date, to_date, contributor_date_dict, activity_core_set):
             """
-                Those who contributed at least once every 30 days for the last 90 days,
-                or made at least 4 contributions in the last 90 days
+                Throw out the head 50% contribution and contribute the next 30% or at least once a month for the current cycle
             """
             contribution_count_dict = {k: len(list_sub(v, from_date.isoformat(), to_date.isoformat())) for k, v in
                                        contributor_date_dict.items()}
@@ -831,8 +933,8 @@ class MetricsModel:
 
         def get_activity_core_set(from_date, to_date, contributor_date_dict):
             """
-                80% of all contributions for the quarter/year are made by the smallest group of people,
-                which is called the quarter/year core contributors
+                50% of all contributions in the cycle (excluding star and fork contributions) are made by the smallest group of people, 
+                which is called the core contributors of the cycle.
             """
             contribution_count_dict = {k: len(list_sub(v, from_date.isoformat(), to_date.isoformat())) for k, v in
                                        contributor_date_dict.items()}
@@ -1371,9 +1473,9 @@ class CommunitySupportMetricsModel(MetricsModel):
             score = community_support(community_decay(metrics_data, last_metrics_data, level, self.weights), level, self.weights)
             metrics_data["community_support_score"] = score
             item_datas.append(metrics_data)
-            if len(item_datas) > MAX_BULK_UPDATE_SIZE:
-                self.es_out.bulk_upload(item_datas, "uuid")
-                item_datas = []
+            # if len(item_datas) > MAX_BULK_UPDATE_SIZE:
+            self.es_out.bulk_upload(item_datas, "uuid")
+            item_datas = []
         self.es_out.bulk_upload(item_datas, "uuid")
 
     def cache_last_metrics_data(self, item, last_metrics_data):
@@ -1712,9 +1814,9 @@ class CodeQualityGuaranteeMetricsModel(MetricsModel):
             score = code_quality_guarantee(code_quality_decay(metrics_data, last_metrics_data, level, self.weights), level, self.weights)
             metrics_data["code_quality_guarantee"] = score
             item_datas.append(metrics_data)
-            if len(item_datas) > MAX_BULK_UPDATE_SIZE:
-                self.es_out.bulk_upload(item_datas, "uuid")
-                item_datas = []
+            # if len(item_datas) > MAX_BULK_UPDATE_SIZE:
+            self.es_out.bulk_upload(item_datas, "uuid")
+            item_datas = []
         self.es_out.bulk_upload(item_datas, "uuid")
 
     def cache_last_metrics_data(self, item, last_metrics_data):
