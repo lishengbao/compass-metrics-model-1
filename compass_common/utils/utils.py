@@ -11,3 +11,9 @@ def get_all_repo(json_file, origin):
                 for repo in all_repo_json[project].get(key):
                     all_repo.append(repo)
     return all_repo
+
+def get_all_org(json_file, origin):
+    repo_list = get_all_repo(json_file, origin)
+    org_set = {repo[:repo.rfind('/')] for repo in repo_list}
+    return list(org_set)
+    

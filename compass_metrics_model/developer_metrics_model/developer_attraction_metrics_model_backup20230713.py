@@ -60,12 +60,22 @@ class DeveloperAttractionMetricsModel(MetricsModel):
                     attraction_set.add(contributor_name)
         return attraction_set 
     
-    def get_freq_contributor_set(self, from_date, to_date, date_field_contributor_dict, is_bot=False, period="year"):
-        return self.get_freq_contributor_activity_set(from_date, to_date, date_field_contributor_dict,
-                                                                   is_bot,
-                                                                   period) 
+    # def get_freq_contributor_attraction_set(self, from_date, to_date, date_field_contributor_dict, is_bot=False):
+    #     pass
 
-    def get_eco_contributor_set(self, from_date, to_date, date_field_contributor_dict, is_bot=False): 
+
+    
+
+    def get_eco_contributor_attraction_set(self, from_date, to_date, date_field_contributor_dict, is_bot=False):
+
+        def get_first_contribution_date(contributor, date_field_list):
+            """ Get first contribution time for contributor """
+            date_list = []
+            for date_field in date_field_list:
+                contribution_date_list = contributor.get(date_field)
+                if contribution_date_list:
+                    date_list.append(contribution_date_list[0])
+            return min(date_list)
 
         from_date = from_date.isoformat()
         to_date = to_date.isoformat()
@@ -76,7 +86,8 @@ class DeveloperAttractionMetricsModel(MetricsModel):
         contributor_list = [item for sublist in date_field_contributor_dict.values() for item in sublist]
         date_field_list = list(date_field_contributor_dict.keys())
         for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
-            if (is_bot is None or contributor["is_bot"] == is_bot):
+            if (is_bot is None or contributor["is_bot"] == is_bot) and \
+                    from_date <= get_first_contribution_date(contributor, date_field_list) <= to_date:
                 is_leader = contributor.get("is_leader", False)
                 is_org = False
                 for org in contributor["org_change_date_list"]:
@@ -100,59 +111,7 @@ class DeveloperAttractionMetricsModel(MetricsModel):
                 elif not is_leader and not is_org:
                     eco_participant_person_set.add(contributor_name)
 
-        return eco_leader_org_set, eco_leader_person_set, eco_participant_org_set, eco_participant_person_set                                                                                                                 
-        
-    def get_type_contributor_set(self, from_date, to_date, date_field_contributor_dict, is_bot=False):
-        return self.get_type_contributor_activity_set(from_date, to_date, date_field_contributor_dict, is_bot)
-
-    
-
-    # def get_eco_contributor_attraction_set(self, from_date, to_date, date_field_contributor_dict, is_bot=False):
-
-    #     def get_first_contribution_date(contributor, date_field_list):
-    #         """ Get first contribution time for contributor """
-    #         date_list = []
-    #         for date_field in date_field_list:
-    #             contribution_date_list = contributor.get(date_field)
-    #             if contribution_date_list:
-    #                 date_list.append(contribution_date_list[0])
-    #         return min(date_list)
-
-    #     from_date = from_date.isoformat()
-    #     to_date = to_date.isoformat()
-    #     eco_leader_org_set = set()
-    #     eco_leader_person_set = set()
-    #     eco_participant_org_set = set()
-    #     eco_participant_person_set = set()
-    #     contributor_list = [item for sublist in date_field_contributor_dict.values() for item in sublist]
-    #     date_field_list = list(date_field_contributor_dict.keys())
-    #     for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
-    #         if (is_bot is None or contributor["is_bot"] == is_bot) and \
-    #                 from_date <= get_first_contribution_date(contributor, date_field_list) <= to_date:
-    #             is_leader = contributor.get("is_leader", False)
-    #             is_org = False
-    #             for org in contributor["org_change_date_list"]:
-    #                 if org.get("org_name") is not None and check_times_has_overlap(org["first_date"], org["last_date"],
-    #                                                                                from_date, to_date):
-    #                     is_org = True
-    #                     break
-    #             contributor_name = None
-    #             if contributor.get("id_platform_login_name_list") and len(
-    #                     contributor.get("id_platform_login_name_list")) > 0:
-    #                 contributor_name = contributor["id_platform_login_name_list"][0]
-    #             elif contributor.get("id_git_author_name_list") and len(contributor.get("id_git_author_name_list")) > 0:
-    #                 contributor_name = contributor["id_git_author_name_list"][0]
-
-    #             if is_leader and is_org:
-    #                 eco_leader_org_set.add(contributor_name)
-    #             elif is_leader and not is_org:
-    #                 eco_leader_person_set.add(contributor_name)
-    #             elif not is_leader and is_org:
-    #                 eco_participant_org_set.add(contributor_name)
-    #             elif not is_leader and not is_org:
-    #                 eco_participant_person_set.add(contributor_name)
-
-    #     return eco_leader_org_set, eco_leader_person_set, eco_participant_org_set, eco_participant_person_set
+        return eco_leader_org_set, eco_leader_person_set, eco_participant_org_set, eco_participant_person_set
 
 
     def get_score(self, item, level="repo"):
@@ -225,70 +184,72 @@ class DeveloperAttractionMetricsModel(MetricsModel):
                 # created_since = self.created_since(to_date, repos_list)
                 # if created_since is None:
                 #     continue
-                issue_creation_contributor_list = self.get_contributor_list(date, to_date, repos_list,
-                                                                            "issue_creation_date_list")
-                pr_creation_contributor_list = self.get_contributor_list(date, to_date, repos_list,
-                                                                         "pr_creation_date_list")
-                issue_comments_contributor_list = self.get_contributor_list(date, to_date, repos_list,
-                                                                            "issue_comments_date_list")
-                pr_review_contributor_list = self.get_contributor_list(date, to_date, repos_list,
-                                                                       "pr_review_date_list")
-                code_commit_contributor_list = self.get_contributor_list(date, to_date, repos_list,
-                                                                         "code_commit_date_list")
-                star_contributor_list = self.get_contributor_list(date, to_date, repos_list, "star_date_list")
-                fork_contributor_list = self.get_contributor_list(date, to_date, repos_list, "fork_date_list")
-                watch_contributor_list = self.get_contributor_list(date, to_date, repos_list, "watch_date_list")
+                first_issue_creation_contributor_list = self.get_contributor_list(date, to_date, repos_list,
+                                                                                  "first_issue_creation_date")
+                first_pr_creation_contributor_list = self.get_contributor_list(date, to_date, repos_list,
+                                                                               "first_pr_creation_date")
+                first_issue_comments_contributor_list = self.get_contributor_list(date, to_date, repos_list,
+                                                                                  "first_issue_comments_date")
+                first_pr_review_contributor_list = self.get_contributor_list(date, to_date, repos_list,
+                                                                             "first_pr_review_date")
+                first_code_commit_contributor_list = self.get_contributor_list(date, to_date, repos_list,
+                                                                               "first_code_commit_date")
+                first_star_contributor_list = self.get_contributor_list(date, to_date, repos_list, "first_star_date")
+                first_fork_contributor_list = self.get_contributor_list(date, to_date, repos_list, "first_fork_date")
+                first_watch_contributor_list = self.get_contributor_list(date, to_date, repos_list, "first_watch_date")
 
-                date_field_contributor_dict = {
-                        "issue_creation_date_list": issue_creation_contributor_list,
-                        "pr_creation_date_list": pr_creation_contributor_list,
-                        "issue_comments_date_list": issue_comments_contributor_list,
-                        "pr_review_date_list": pr_review_contributor_list,
-                        "code_commit_date_list": code_commit_contributor_list,
-                        "star_date_list": star_contributor_list,
-                        "fork_date_list": fork_contributor_list,
-                        "watch_date_list": watch_contributor_list
-                    }
-
-                total_attraction_set = self.get_contributor_attraction_set(date, to_date, date_field_contributor_dict)
-
-                freq_total_set, \
-                freq_casual_set, \
-                freq_regular_set, \
-                freq_core_set = self.get_freq_contributor_set(date, to_date, date_field_contributor_dict, period=period_key)
+                total_attraction_set, freq_casual_set, freq_regular_set, freq_core_set = self.get_freq_contributor_attraction_set(
+                    date, to_date, {
+                        "issue_creation_date_list": first_issue_creation_contributor_list,
+                        "pr_creation_date_list": first_pr_creation_contributor_list,
+                        "issue_comments_date_list": first_issue_comments_contributor_list,
+                        "pr_review_date_list": first_pr_review_contributor_list,
+                        "code_commit_date_list": first_code_commit_contributor_list,
+                        "star_date_list": first_star_contributor_list,
+                        "fork_date_list": first_fork_contributor_list,
+                        "watch_date_list": first_watch_contributor_list
+                    }, period=period_key)
                 
                 eco_leader_org_set, \
                 eco_leader_person_set, \
                 eco_participant_org_set, \
-                eco_participant_person_set = self.get_eco_contributor_set(date, to_date, date_field_contributor_dict)
+                eco_participant_person_set = self.get_eco_contributor_attraction_set(date, to_date, {
+                        "issue_creation_date_list": first_issue_creation_contributor_list,
+                        "pr_creation_date_list": first_pr_creation_contributor_list,
+                        "issue_comments_date_list": first_issue_comments_contributor_list,
+                        "pr_review_date_list": first_pr_review_contributor_list,
+                        "code_commit_date_list": first_code_commit_contributor_list,
+                        "star_date_list": first_star_contributor_list,
+                        "fork_date_list": first_fork_contributor_list,
+                        "watch_date_list": first_watch_contributor_list})
 
-                type_observe_set = self.get_type_contributor_set(date, to_date, {
-                    "star_date_list": star_contributor_list,
-                    "fork_date_list": fork_contributor_list,
-                    "watch_date_list": watch_contributor_list})
-                type_observe_star_set = self.get_type_contributor_set(date, to_date, {
-                    "star_date_list": star_contributor_list})
-                type_observe_fork_set = self.get_type_contributor_set(date, to_date, {
-                    "fork_date_list": fork_contributor_list})
-                type_observe_watch_set = self.get_type_contributor_set(date, to_date, {
-                    "watch_date_list": watch_contributor_list})
-                type_issue_set = self.get_type_contributor_set(date, to_date, {
-                    "issue_creation_date_list": issue_creation_contributor_list,
-                    "issue_comments_date_list": issue_comments_contributor_list})
-                type_issue_creator_set = self.get_type_contributor_set(date, to_date, {
-                    "issue_creation_date_list": issue_creation_contributor_list})
-                type_issue_commenter_set = self.get_type_contributor_set(date, to_date, {
-                    "issue_comments_date_list": issue_comments_contributor_list})
-                type_code_set = self.get_type_contributor_set(date, to_date, {
-                    "pr_creation_date_list": pr_creation_contributor_list,
-                    "pr_review_date_list": pr_review_contributor_list,
-                    "code_commit_date_list": code_commit_contributor_list})
-                type_code_author_set = self.get_type_contributor_set(date, to_date, {
-                    "code_commit_date_list": code_commit_contributor_list})
-                type_code_pr_creator_set = self.get_type_contributor_set(date, to_date, {
-                    "pr_creation_date_list": pr_creation_contributor_list})
-                type_code_pr_reviewer_set = self.get_type_contributor_set(date, to_date, {
-                    "pr_review_date_list": pr_review_contributor_list})
+                type_observe_set = self.get_type_contributor_attraction_set(date, to_date, {
+                    "star_date_list": first_star_contributor_list,
+                    "fork_date_list": first_fork_contributor_list,
+                    "watch_date_list": first_watch_contributor_list})
+                type_observe_star_set = self.get_type_contributor_attraction_set(date, to_date, {
+                    "star_date_list": first_star_contributor_list})
+                type_observe_fork_set = self.get_type_contributor_attraction_set(date, to_date, {
+                    "fork_date_list": first_fork_contributor_list})
+                type_observe_watch_set = self.get_type_contributor_attraction_set(date, to_date, {
+                    "watch_date_list": first_watch_contributor_list})
+                type_issue_set = self.get_type_contributor_attraction_set(date, to_date, {
+                    "issue_creation_date_list": first_issue_creation_contributor_list,
+                    "issue_comments_date_list": first_issue_comments_contributor_list})
+                type_issue_creator_set = self.get_type_contributor_attraction_set(date, to_date, {
+                    "issue_creation_date_list": first_issue_creation_contributor_list})
+                type_issue_commenter_set = self.get_type_contributor_attraction_set(date, to_date, {
+                    "issue_comments_date_list": first_issue_comments_contributor_list})
+                type_code_set = self.get_type_contributor_attraction_set(date, to_date, {
+                    "pr_creation_date_list": first_pr_creation_contributor_list,
+                    "pr_review_date_list": first_pr_review_contributor_list,
+                    "code_commit_date_list": first_code_commit_contributor_list})
+                type_code_author_set = self.get_type_contributor_attraction_set(date, to_date, {
+                    "code_commit_date_list": first_code_commit_contributor_list})
+                type_code_pr_creator_set = self.get_type_contributor_attraction_set(date, to_date, {
+                    "pr_creation_date_list": first_pr_creation_contributor_list})
+                type_code_pr_reviewer_set = self.get_type_contributor_attraction_set(date, to_date, {
+                    "pr_review_date_list": first_pr_review_contributor_list})
                 uuid_value = get_uuid(str(date), self.community, level, label, self.model_name, type, period_key,
                                       self.weights_hash, self.custom_fields_hash)
                 metrics_data = {
@@ -299,26 +260,26 @@ class DeveloperAttractionMetricsModel(MetricsModel):
                     'model_name': self.model_name,
                     'period': period_key,
                     'freq_count': len(total_attraction_set),
-                    'freq_casual_count': len(freq_casual_set & total_attraction_set),
-                    'freq_regular_count': len(freq_regular_set & total_attraction_set),
-                    'freq_core_count': len(freq_core_set & total_attraction_set),
+                    'freq_casual_count': len(freq_casual_set),
+                    'freq_regular_count': len(freq_regular_set),
+                    'freq_core_count': len(freq_core_set),
                     'eco_count': len(total_attraction_set),
-                    'eco_leader_org_count': len(eco_leader_org_set & total_attraction_set),
-                    'eco_leader_person_count': len(eco_leader_person_set & total_attraction_set),
-                    'eco_participant_org_count': len(eco_participant_org_set & total_attraction_set),
-                    'eco_participant_person_count': len(eco_participant_person_set & total_attraction_set),
+                    'eco_leader_org_count': len(eco_leader_org_set),
+                    'eco_leader_person_count': len(eco_leader_person_set),
+                    'eco_participant_org_count': len(eco_participant_org_set),
+                    'eco_participant_person_count': len(eco_participant_person_set),
                     'type_count': len(total_attraction_set),
-                    'type_observe_count': len(type_observe_set & total_attraction_set),
-                    'type_observe_star_count': len(type_observe_star_set & total_attraction_set),
-                    'type_observe_fork_count': len(type_observe_fork_set & total_attraction_set),
-                    'type_observe_watch_count': len(type_observe_watch_set & total_attraction_set),
-                    'type_issue_count': len(type_issue_set & total_attraction_set),
-                    'type_issue_creator_count': len(type_issue_creator_set & total_attraction_set),
-                    'type_issue_commenter_count': len(type_issue_commenter_set & total_attraction_set),
-                    'type_code_count': len(type_code_set & total_attraction_set),
-                    'type_code_author_count': len(type_code_author_set & total_attraction_set),
-                    'type_code_pr_creator_count': len(type_code_pr_creator_set & total_attraction_set),
-                    'type_code_pr_reviewer_count': len(type_code_pr_reviewer_set & total_attraction_set),
+                    'type_observe_count': len(type_observe_set),
+                    'type_observe_star_count': len(type_observe_star_set),
+                    'type_observe_fork_count': len(type_observe_fork_set),
+                    'type_observe_watch_count': len(type_observe_watch_set),
+                    'type_issue_count': len(type_issue_set),
+                    'type_issue_creator_count': len(type_issue_creator_set),
+                    'type_issue_commenter_count': len(type_issue_commenter_set),
+                    'type_code_count': len(type_code_set),
+                    'type_code_author_count': len(type_code_author_set),
+                    'type_code_pr_creator_count': len(type_code_pr_creator_set),
+                    'type_code_pr_reviewer_count': len(type_code_pr_reviewer_set),
                     'type_forum_count': None,
                     'type_chat_count': None,
                     'type_media_count': None,

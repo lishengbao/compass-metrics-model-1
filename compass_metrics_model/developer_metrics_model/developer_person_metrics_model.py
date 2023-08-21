@@ -59,8 +59,8 @@ class DeveloperPersonMetricsModel(MetricsModel):
                 elif contributor.get("id_git_author_name_list") and len(
                         contributor.get("id_git_author_name_list")) > 0:
                     contributor_name = contributor["id_git_author_name_list"][0]
-                if contributor_name in ["vscodebot[bot]", "alexbarten", "kiranshila", "michaelvanstraten", "xiangpengzhao", "Alexendoo", "jnicklas" ,"Box-Of-Hats"]:
-                    continue
+                # if contributor_name in ["vscodebot[bot]", "alexbarten", "kiranshila", "michaelvanstraten", "xiangpengzhao", "Alexendoo", "jnicklas" ,"Box-Of-Hats"]:
+                #     continue
                 contributor_info = self.contributor_info_dict.get(contributor_name, {})
                 org_info = contributor["org_change_date_list"]
                 if contributor_info.get("org_info", None):

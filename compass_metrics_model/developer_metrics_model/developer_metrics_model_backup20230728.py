@@ -18,16 +18,6 @@ logger = logging.getLogger(__name__)
 
 MODEL_NAME = "Developer"
 
-observe_date_field = ["star_date_list", "fork_date_list", "watch_date_list"]
-issue_date_field = ["issue_creation_date_list", "issue_comments_date_list"]
-code_date_field = ["pr_creation_date_list", "pr_comments_date_list", "code_commit_date_list"]
-issue_admin_date_field = ["issue_label_date_list","issue_close_date_list","issue_reopen_date_list",
-                            "issue_assign_date_list","issue_milestone_date_list","issue_mark_as_duplicate_date_list",
-                            "issue_transfer_date_list","issue_lock_date_list"]
-code_admin_date_field = ["pr_label_date_list", "pr_close_date_list", "pr_reopen_date_list", "pr_assign_date_list", 
-                            "pr_milestone_date_list", "pr_mark_as_duplicate_date_list", "pr_transfer_date_list",
-                            "pr_lock_date_list", "pr_merge_date_list", "pr_review_date_list", "code_direct_commit_date_list"]
-
 
 def get_contributor_type(contributor_name_set, eco_contributor_dict, type_contributor_dict):
     result_list = []
@@ -72,43 +62,13 @@ class DeveloperMetricsModel(MetricsModel):
 
     def get_eco_contributor_dict(self, from_date, to_date, date_field_contributor_dict, is_bot=False):
 
-        def get_first_contribution_date(contributor, date_field_list):
-            """ Get first contribution time for contributor """
-            date_list = []
-            for date_field in date_field_list:
-                contribution_date_list = contributor.get(date_field)
-                if contribution_date_list:
-                    date_list.append(contribution_date_list[0])
-            return min(date_list) if len(date_list) > 0 else None
-
         from_date = from_date.isoformat()
         to_date = to_date.isoformat()
         eco_contributor_dict = {}
-        date_field_list = ["issue_label_date_list",
-            "issue_close_date_list",
-            "issue_reopen_date_list",
-            "issue_assign_date_list",
-            "issue_milestone_date_list",
-            "issue_mark_as_duplicate_date_list",
-            "issue_transfer_date_list",
-            "issue_lock_date_list",
-            "pr_label_date_list",
-            "pr_close_date_list",
-            "pr_reopen_date_list",
-            "pr_assign_date_list",
-            "pr_milestone_date_list",
-            "pr_mark_as_duplicate_date_list",
-            "pr_transfer_date_list",
-            "pr_lock_date_list",
-            "pr_merge_date_list",
-            "pr_review_date_list"]
         contributor_list = [item for sublist in date_field_contributor_dict.values() for item in sublist]
         for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
             if (is_bot is None or contributor["is_bot"] == is_bot):
-                is_leader = False
-                min_contribution_date = get_first_contribution_date(contributor, date_field_list)
-                if min_contribution_date and from_date >= min_contribution_date:
-                    is_leader = True
+                is_leader = contributor.get("is_leader", False)
                 is_org = False
                 org_name = ""
                 for org in contributor["org_change_date_list"]:
@@ -153,30 +113,14 @@ class DeveloperMetricsModel(MetricsModel):
         to_date_str = to_date.isoformat()
         type_contributor_dict = {}
 
-
-        observe_contributor_uuid_dict = {}
-        issue_contributor_uuid_dict = {}
-        code_contributor_uuid_dict = {}
-        issue_admin_contributor_uuid_dict = {}
-        code_admin_contributor_uuid_dict= {}
-        for date_field in observe_date_field:
-            observe_contributor_uuid_dict[date_field] = {contributor["uuid"] for contributor in date_field_contributor_dict[date_field]}
-        for date_field in issue_date_field:
-            issue_contributor_uuid_dict[date_field] = {contributor["uuid"] for contributor in date_field_contributor_dict[date_field]}
-        for date_field in code_date_field:
-            code_contributor_uuid_dict[date_field] = {contributor["uuid"] for contributor in date_field_contributor_dict[date_field]}
-        for date_field in issue_admin_date_field:
-            issue_admin_contributor_uuid_dict[date_field] = {contributor["uuid"] for contributor in date_field_contributor_dict[date_field]}
-        for date_field in code_admin_date_field:
-            code_admin_contributor_uuid_dict[date_field] = {contributor["uuid"] for contributor in date_field_contributor_dict[date_field]}
-            
-        type_contributor_uuid_dict = {
-            "observe": observe_contributor_uuid_dict,
-            "issue": issue_contributor_uuid_dict,
-            "code": code_contributor_uuid_dict,
-            "issue_admin": issue_admin_contributor_uuid_dict,
-            "code_admin": code_admin_contributor_uuid_dict,
-        }
+        issue_creation_contributor_uuid_set = {contributor["uuid"] for contributor in date_field_contributor_dict["issue_creation_date_list"]}
+        pr_creation_contributor_uuid_set = {contributor["uuid"] for contributor in date_field_contributor_dict["pr_creation_date_list"]}
+        issue_comments_contributor_uuid_set = {contributor["uuid"] for contributor in date_field_contributor_dict["issue_comments_date_list"]}
+        pr_review_contributor_uuid_set = {contributor["uuid"] for contributor in date_field_contributor_dict["pr_review_date_list"]}
+        code_commit_contributor_uuid_set = {contributor["uuid"] for contributor in date_field_contributor_dict["code_commit_date_list"]}
+        star_contributor_uuid_set = {contributor["uuid"]: contributor for contributor in date_field_contributor_dict["star_date_list"]}
+        fork_contributor_uuid_set = {contributor["uuid"] for contributor in date_field_contributor_dict["fork_date_list"]}
+        watch_contributor_uuid_set = {contributor["uuid"] for contributor in date_field_contributor_dict["watch_date_list"]}
 
         contributor_list = [item for sublist in date_field_contributor_dict.values() for item in sublist]
         for contributor in list({item["uuid"]: item for item in contributor_list}.values()):
@@ -189,22 +133,46 @@ class DeveloperMetricsModel(MetricsModel):
                 elif contributor.get("id_git_author_name_list") and len(contributor.get("id_git_author_name_list")) > 0:
                     contributor_name = contributor["id_git_author_name_list"][0]
 
-                for type, contributor_uuid_dict in type_contributor_uuid_dict.items():
-                    for date_field, contributor_uuid_set in contributor_uuid_dict.items():
-                        if contributor["uuid"] in contributor_uuid_set:
-                            date_field_replace = date_field.replace("_date_list", "")
-                            if type == "code":
-                                date_field_replace = date_field_replace.replace("code_", "")
-                            if type in ["issue_admin", "issue"]:
-                                date_field_replace = date_field_replace.replace("issue_", "")
-                            if type == "code_admin":
-                                date_field_replace = date_field_replace.replace("pr_", "")
-                            type_name = type + "_" + date_field_replace
-                            type_list.append({
-                                "type_name": type_name,
-                                "contribution_count": len(list_sub(contributor[date_field], from_date_str, to_date_str))
-                            })
-
+                if contributor["uuid"] in star_contributor_uuid_set:
+                    type_list.append({
+                        "type_name": "observe_star",
+                        "contribution_count": len(list_sub(contributor["star_date_list"], from_date_str, to_date_str))
+                    })
+                if contributor["uuid"] in fork_contributor_uuid_set:
+                    type_list.append({
+                        "type_name": "observe_fork",
+                        "contribution_count": len(list_sub(contributor["fork_date_list"], from_date_str, to_date_str))
+                    })
+                if contributor["uuid"] in watch_contributor_uuid_set:
+                    type_list.append({
+                        "type_name": "observe_watch",
+                        "contribution_count": len(list_sub(contributor["watch_date_list"], from_date_str, to_date_str))
+                    })
+                if contributor["uuid"] in issue_creation_contributor_uuid_set:
+                    type_list.append({
+                        "type_name": "issue_creator",
+                        "contribution_count": len(list_sub(contributor["issue_creation_date_list"], from_date_str, to_date_str))
+                    })
+                if contributor["uuid"] in issue_comments_contributor_uuid_set:
+                    type_list.append({
+                        "type_name": "issue_commenter",
+                        "contribution_count": len(list_sub(contributor["issue_comments_date_list"], from_date_str, to_date_str))
+                    })
+                if contributor["uuid"] in code_commit_contributor_uuid_set:
+                    type_list.append({
+                        "type_name": "code_author",
+                        "contribution_count": len(list_sub(contributor["code_commit_date_list"], from_date_str, to_date_str))
+                    })
+                if contributor["uuid"] in pr_creation_contributor_uuid_set:
+                    type_list.append({
+                        "type_name": "code_pr_creator",
+                        "contribution_count": len(list_sub(contributor["pr_creation_date_list"], from_date_str, to_date_str))
+                    })
+                if contributor["uuid"] in pr_review_contributor_uuid_set:
+                    type_list.append({
+                        "type_name": "code_pr_reviewer",
+                        "contribution_count": len(list_sub(contributor["pr_review_date_list"], from_date_str, to_date_str))
+                    })
                 type_contributor_dict[contributor_name] = type_list
         return type_contributor_dict
 
@@ -489,25 +457,74 @@ class DeveloperMetricsModel(MetricsModel):
             for date in date_list:
                 logger.info(f"{str(date)}--{self.model_name}--{label}--{period_key}")
                 to_date = date + str_to_offset(period_value["offset"])
-                created_since = self.created_since(to_date, repos_list)
-                if created_since is None:
-                    continue
-
-                all_date_field = observe_date_field + issue_date_field + code_date_field + issue_admin_date_field + code_admin_date_field
-                date_field_contributor_dict = {}
-                date_field_contributor_silence_dict = {}
+                # created_since = self.created_since(to_date, repos_list)
+                # if created_since is None:
+                #     continue
+                issue_creation_contributor_list = self.get_contributor_list(date, to_date, repos_list,
+                                                                            "issue_creation_date_list")
+                pr_creation_contributor_list = self.get_contributor_list(date, to_date, repos_list,
+                                                                         "pr_creation_date_list")
+                issue_comments_contributor_list = self.get_contributor_list(date, to_date, repos_list,
+                                                                            "issue_comments_date_list")
+                pr_review_contributor_list = self.get_contributor_list(date, to_date, repos_list,
+                                                                       "pr_review_date_list")
+                code_commit_contributor_list = self.get_contributor_list(date, to_date, repos_list,
+                                                                         "code_commit_date_list")
+                star_contributor_list = self.get_contributor_list(date, to_date, repos_list, "star_date_list")
+                fork_contributor_list = self.get_contributor_list(date, to_date, repos_list, "fork_date_list")
+                watch_contributor_list = self.get_contributor_list(date, to_date, repos_list, "watch_date_list")
 
                 last_90_day_to_date = to_date + str_to_offset("-90d")
-                for date_field in all_date_field:
-                    date_field_contributor_dict[date_field] = self.get_contributor_list(date, to_date, repos_list, date_field)
-                    first_date_field = "first_" + date_field.replace("_list", "")
-                    date_field_contributor_silence_dict[date_field] = self.get_contributor_silence_list(last_90_day_to_date,
+                issue_creation_contributor_silence_list = self.get_contributor_silence_list(last_90_day_to_date,
                                                                                             to_date, repos_list,
-                                                                                            date_field,
-                                                                                            first_date_field)
+                                                                                            "issue_creation_date_list",
+                                                                                            "first_issue_creation_date")
+                pr_creation_contributor_silence_list = self.get_contributor_silence_list(last_90_day_to_date, to_date,
+                                                                                         repos_list,
+                                                                                         "pr_creation_date_list",
+                                                                                         "first_pr_creation_date")
+                issue_comments_contributor_silence_list = self.get_contributor_silence_list(last_90_day_to_date,
+                                                                                            to_date, repos_list,
+                                                                                            "issue_comments_date_list",
+                                                                                            "first_issue_comments_date")
+                pr_review_contributor_silence_list = self.get_contributor_silence_list(last_90_day_to_date, to_date,
+                                                                                       repos_list,
+                                                                                       "pr_review_date_list",
+                                                                                       "first_pr_review_date")
+                code_commit_contributor_silence_list = self.get_contributor_silence_list(last_90_day_to_date, to_date,
+                                                                                         repos_list,
+                                                                                         "code_commit_date_list",
+                                                                                         "first_code_commit_date")
+                star_contributor_silence_list = self.get_contributor_silence_list(last_90_day_to_date, to_date,
+                                                                                  repos_list, "star_date_list",
+                                                                                  "first_fork_date")
+                fork_contributor_silence_list = self.get_contributor_silence_list(last_90_day_to_date, to_date,
+                                                                                  repos_list, "fork_date_list",
+                                                                                  "first_star_date")
+                watch_contributor_silence_list = self.get_contributor_silence_list(last_90_day_to_date, to_date,
+                                                                                   repos_list, "watch_date_list",
+                                                                                   "first_watch_date")
 
                 contributor_state = self.get_contributor_state(
-                    date, to_date, date_field_contributor_dict, date_field_contributor_silence_dict, period=period_key)
+                    date, to_date, {
+                        "issue_creation_date_list": issue_creation_contributor_list,
+                        "pr_creation_date_list": pr_creation_contributor_list,
+                        "issue_comments_date_list": issue_comments_contributor_list,
+                        "pr_review_date_list": pr_review_contributor_list,
+                        "code_commit_date_list": code_commit_contributor_list,
+                        "star_date_list": star_contributor_list,
+                        "fork_date_list": fork_contributor_list,
+                        "watch_date_list": watch_contributor_list
+                    }, {
+                        "issue_creation_date_list": issue_creation_contributor_silence_list,
+                        "pr_creation_date_list": pr_creation_contributor_silence_list,
+                        "issue_comments_date_list": issue_comments_contributor_silence_list,
+                        "pr_review_date_list": pr_review_contributor_silence_list,
+                        "code_commit_date_list": code_commit_contributor_silence_list,
+                        "star_date_list": star_contributor_silence_list,
+                        "fork_date_list": fork_contributor_silence_list,
+                        "watch_date_list": watch_contributor_silence_list
+                    }, period=period_key)
 
                 uuid_value = get_uuid(str(date), self.community, level, label, self.model_name, type, period_key,
                                       self.weights_hash, self.custom_fields_hash)
